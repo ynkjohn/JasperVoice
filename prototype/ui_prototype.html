@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JasperVoice UI Prototype</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0F0F0F;
+            --bg-alt: #1A1A1A;
+            --bg-card: #1A1A1A;
+            --bg-card-hover: #222222;
+            --bg-sidebar: #141414;
+            --border: #2A2A2A;
+            --border-strong: #3A3A3A;
+            --fg: #E8E6E6;
+            --fg-muted: #9E9A9A;
+            --fg-disabled: #5A5A5A;
+            --accent: #D97757;
+            --accent-hover: #E88766;
+            --accent-dim: rgba(217, 119, 87, 0.12);
+            --accent-glow: rgba(217, 119, 87, 0.25);
+            --success: #4ade80;
+            --warning: #B8893E;
+            --danger: #D14E5A;
+            --radius: 10px;
+            --radius-sm: 6px;
+            --radius-lg: 14px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        /* === SIDEBAR === */
+        .sidebar {
+            width: 240px;
+            min-width: 240px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 0;
+            height: 100vh;
+        }
+
+        .sidebar-header {
+            padding: 20px 18px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sidebar-logo {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #D97757 0%, #B85A3A 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: 700;
+            color: white;
+        }
+
+        .sidebar-brand {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--fg);
+            letter-spacing: -0.2px;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            border-radius: var(--radius-sm);
+            color: var(--fg-muted);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-size: 13.5px;
+            font-weight: 450;
+        }
+
+        .nav-item:hover {
+            background: var(--bg-card);
+            color: var(--fg);
+        }
+
+        .nav-item.active {
+            background: var(--accent-dim);
+            color: var(--accent);
+        }
+
+        .nav-item .nav-icon {
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.7;
+        }
+
+        .nav-item.active .nav-icon {
+            opacity: 1;
+        }
+
+        .nav-badge {
+            margin-left: auto;
+            background: var(--accent-dim);
+            color: var(--accent);
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+
+        .sidebar-footer {
+            padding: 14px 14px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #D97757, #B85A3A);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            color: white;
+        }
+
+        .user-info {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .user-name {
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--fg);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .user-plan {
+            font-size: 11px;
+            color: var(--fg-muted);
+        }
+
+        .collapse-btn {
+            font-size: 11px;
+            color: var(--fg-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 10px;
+            margin: 0 14px 10px;
+        }
+
+        .collapse-btn:hover {
+            color: var(--fg);
+        }
+
+        /* === MAIN CONTENT === */
+        .main {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .page {
+            display: none;
+            padding: 40px 60px;
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        .page-header {
+            margin-bottom: 28px;
+        }
+
+        .page-header h1 {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--fg);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+
+        .page-header h1 .header-icon {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent-dim);
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+        }
+
+        .page-header p {
+            font-size: 13px;
+            color: var(--fg-muted);
+        }
+
+        /* === STATS CARDS === */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px 18px;
+            position: relative;
+        }
+
+        .stat-card .stat-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--fg-muted);
+            font-weight: 500;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stat-card .stat-label .stat-icon {
+            color: var(--accent);
+            font-size: 12px;
+        }
+
+        .stat-card .stat-value {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--fg);
+            letter-spacing: -0.5px;
+        }
+
+        .stat-card .stat-sub {
+            font-size: 11px;
+            color: var(--fg-muted);
+            margin-top: 2px;
+        }
+
+        /* === RECENT ACTIVITY === */
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .section-header h2 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--fg);
+        }
+
+        .section-header .view-all {
+            font-size: 12.5px;
+            color: var(--accent);
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .section-header .view-all:hover {
+            text-decoration: underline;
+        }
+
+        .section-header p {
+            font-size: 12px;
+            color: var(--fg-muted);
+            margin-top: 2px;
+        }
+
+        .activity-list {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .activity-item {
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+
+        .activity-text {
+            font-size: 13.5px;
+            color: var(--fg);
+            line-height: 1.55;
+            margin-bottom: 8px;
+        }
+
+        .activity-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .meta-tag {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .meta-tag.time {
+            background: var(--bg-card);
+            color: var(--fg-muted);
+            border: 1px solid var(--border);
+        }
+
+        .meta-tag.words {
+            background: var(--accent-dim);
+            color: var(--accent);
+        }
+
+        .meta-tag.duration {
+            background: rgba(52, 211, 153, 0.1);
+            color: var(--success);
+        }
+
+        .meta-action {
+            font-size: 11.5px;
+            color: var(--fg-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: 4px;
+        }
+
+        .meta-action:hover {
+            color: var(--accent);
+        }
+
+        /* === HISTORY PAGE === */
+        .history-filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        .search-input {
+            flex: 1;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            color: var(--fg);
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .search-input:focus {
+            border-color: var(--accent);
+        }
+
+        .search-input::placeholder {
+            color: var(--fg-disabled);
+        }
+
+        .filter-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 8px 14px;
+            color: var(--fg-muted);
+            font-size: 12.5px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .filter-btn:hover {
+            border-color: var(--border-strong);
+            color: var(--fg);
+        }
+
+        /* === DICTIONARY PAGE === */
+        .dict-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .dict-table th {
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--fg-muted);
+            font-weight: 500;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .dict-table td {
+            padding: 12px 14px;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border);
+            color: var(--fg);
+        }
+
+        .dict-table tr:hover td {
+            background: var(--bg-card);
+        }
+
+        .dict-add-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--accent-dim);
+            border: 1px solid rgba(74, 142, 255, 0.2);
+            border-radius: var(--radius-sm);
+            padding: 8px 16px;
+            color: var(--accent);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .dict-add-btn:hover {
+            background: rgba(74, 142, 255, 0.18);
+        }
+
+        /* === SETTINGS PAGE === */
+        .settings-section {
+            margin-bottom: 32px;
+        }
+
+        .settings-section-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+
+        .settings-section-header .section-icon {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent-dim);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            color: var(--accent);
+        }
+
+        .settings-section-header h3 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--fg);
+        }
+
+        .settings-section-desc {
+            font-size: 12.5px;
+            color: var(--fg-muted);
+            margin-bottom: 16px;
+            padding-left: 34px;
+        }
+
+        /* Mode cards */
+        .mode-cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 28px;
+        }
+
+        .mode-card {
+            background: var(--bg-card);
+            border: 1.5px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .mode-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .mode-card.selected {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, rgba(74, 142, 255, 0.05) 0%, transparent 70%);
+        }
+
+        .mode-card .mode-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            background: var(--accent-dim);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+
+        .mode-card .mode-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--fg);
+            margin-bottom: 4px;
+        }
+
+        .mode-card .mode-desc {
+            font-size: 12px;
+            color: var(--fg-muted);
+            margin-bottom: 10px;
+        }
+
+        .mode-card .mode-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .mode-tag {
+            font-size: 10.5px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--fg-muted);
+        }
+
+        .mode-card.selected .mode-check {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            width: 20px;
+            height: 20px;
+            background: var(--accent);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+        }
+
+        /* Model list */
+        .model-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .model-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-radius: var(--radius-sm);
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .model-item:hover {
+            background: var(--bg-card);
+        }
+
+        .model-item.selected {
+            background: var(--accent-dim);
+            border-color: rgba(74, 142, 255, 0.2);
+        }
+
+        .model-name {
+            font-size: 13.5px;
+            font-weight: 500;
+            color: var(--fg);
+        }
+
+        .model-size {
+            font-size: 12px;
+            color: var(--fg-muted);
+            margin-left: 8px;
+        }
+
+        .model-download {
+            font-size: 11px;
+            color: var(--warning);
+            margin-left: 12px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .model-radio {
+            margin-left: auto;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 2px solid var(--border-strong);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .model-item.selected .model-radio {
+            border-color: var(--accent);
+        }
+
+        .model-item.selected .model-radio::after {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent);
+        }
+
+        /* General settings fields */
+        .settings-field {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .settings-field:last-child {
+            border-bottom: none;
+        }
+
+        .field-label {
+            font-size: 13px;
+            color: var(--fg);
+            font-weight: 450;
+        }
+
+        .field-sublabel {
+            font-size: 11.5px;
+            color: var(--fg-muted);
+            margin-top: 2px;
+        }
+
+        .field-value {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .field-select {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 6px 12px;
+            color: var(--fg);
+            font-size: 12.5px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .field-select:focus {
+            border-color: var(--accent);
+        }
+
+        .hotkey-display {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 6px 14px;
+            font-size: 12px;
+            font-family: 'JetBrains Mono', 'Cascadia Mono', monospace;
+            color: var(--fg);
+            letter-spacing: 0.3px;
+        }
+
+        /* === SHORTCUTS PAGE === */
+        .shortcut-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .shortcut-label {
+            font-size: 13px;
+            color: var(--fg);
+        }
+
+        .shortcut-keys {
+            display: flex;
+            gap: 4px;
+        }
+
+        .key-badge {
+            background: var(--bg-card);
+            border: 1px solid var(--border-strong);
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 11.5px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--fg-muted);
+        }
+
+        /* === Scrollbar === */
+        .main::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .main::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .main::-webkit-scrollbar-thumb {
+            background: var(--border-strong);
+            border-radius: 3px;
+        }
+
+        .main::-webkit-scrollbar-thumb:hover {
+            background: var(--fg-disabled);
+        }
+    </style>
+</head>
+<body>
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">J</div>
+            <span class="sidebar-brand">JasperVoice</span>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-item active" data-page="overview">
+                <span class="nav-icon">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+                Overview
+            </div>
+            <div class="nav-item" data-page="history">
+                <span class="nav-icon">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5V8L10.5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </span>
+                History
+            </div>
+            <div class="nav-item" data-page="dictionary">
+                <span class="nav-icon">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h4l2 1.5L10 3h4v10h-4l-2 1.5L6 13H2V3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 4.5V14" stroke="currentColor" stroke-width="1.5"/></svg>
+                </span>
+                Dictionary
+            </div>
+            <div class="nav-item" data-page="shortcuts">
+                <span class="nav-icon">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="4" width="13" height="8" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M4 7h2M7 7h2M10 7h2M5 9.5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </span>
+                Shortcuts
+            </div>
+            <div class="nav-item" data-page="settings">
+                <span class="nav-icon">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </span>
+                Settings
+                <span class="nav-badge">v0.1</span>
+            </div>
+            <div class="nav-item" data-page="changelog">
+                <span class="nav-icon">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5"/><path d="M6 5h4M6 8h4M6 11h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                </span>
+                Changelog
+            </div>
+        </nav>
+
+        <div class="collapse-btn">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8 2L4 6l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Collapse
+        </div>
+
+        <div class="sidebar-footer">
+            <div class="user-avatar">JP</div>
+            <div class="user-info">
+                <div class="user-name">joaop</div>
+                <div class="user-plan">Local Mode</div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main">
+        <!-- OVERVIEW PAGE -->
+        <div class="page active" id="page-overview">
+            <div class="page-header">
+                <h1>
+                    <span class="header-icon">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                    </span>
+                    Overview
+                </h1>
+                <p>Your JasperVoice performance snapshot, recent activity, and productivity trends.</p>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label"><span class="stat-icon">&#9889;</span> Total Words</div>
+                    <div class="stat-value">12,847</div>
+                    <div class="stat-sub">Words transcribed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label"><span class="stat-icon">&#9202;</span> Speaking Time</div>
+                    <div class="stat-value">1h 23m</div>
+                    <div class="stat-sub">Total duration</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label"><span class="stat-icon">&#128200;</span> Sessions</div>
+                    <div class="stat-value">342</div>
+                    <div class="stat-sub">Total recordings</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label"><span class="stat-icon">&#128640;</span> Avg Pace</div>
+                    <div class="stat-value">156 wpm</div>
+                    <div class="stat-sub">Words per minute</div>
+                </div>
+            </div>
+
+            <div class="section-header">
+                <div>
+                    <h2>Recent Activity</h2>
+                    <p>Your latest transcriptions from this device.</p>
+                </div>
+                <span class="view-all" data-page="history">View Full History</span>
+            </div>
+
+            <div class="activity-list">
+                <div class="activity-item">
+                    <div class="activity-text">I want you to do an in-depth review of the API and identify security vulnerabilities. Don't update any code, but launch five agents to do an in-depth review and come back to me with findings.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">1:28 PM</span>
+                        <span class="meta-tag words">35 words</span>
+                        <span class="meta-tag duration">10s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-text">Great, I now need you to proceed forward with the implementation plan and begin updating code respectively.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">1:15 PM</span>
+                        <span class="meta-tag words">17 words</span>
+                        <span class="meta-tag duration">8s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-text">Yes, turn this into a task by task implementation checklist.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">1:01 PM</span>
+                        <span class="meta-tag words">10 words</span>
+                        <span class="meta-tag duration">5s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-text">Great work. I now need you to create a structured plan for implementing these changes without breaking existing functionality.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">12:48 PM</span>
+                        <span class="meta-tag words">19 words</span>
+                        <span class="meta-tag duration">7s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HISTORY PAGE -->
+        <div class="page" id="page-history">
+            <div class="page-header">
+                <h1>
+                    <span class="header-icon">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5V8L10.5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                    </span>
+                    History
+                </h1>
+                <p>All your transcriptions, searchable and filterable.</p>
+            </div>
+
+            <div class="history-filters">
+                <input type="text" class="search-input" placeholder="Search transcriptions...">
+                <button class="filter-btn">All Modes</button>
+                <button class="filter-btn">This Week</button>
+            </div>
+
+            <div class="activity-list">
+                <div class="activity-item">
+                    <div class="activity-text">I want you to do an in-depth review of the SEO and the website don't update any code but just do a review of the SEO.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">Jun 10, 1:27 PM</span>
+                        <span class="meta-tag words">28 words</span>
+                        <span class="meta-tag duration">6s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-text">I want you to do an in-depth review of the API and identify security vulnerabilities. Don't update any code, but launch five agents to do an in-depth review and come back to me with findings.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">Jun 10, 1:28 PM</span>
+                        <span class="meta-tag words">35 words</span>
+                        <span class="meta-tag duration">10s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-text">Great, I now need you to proceed forward with the implementation plan and begin updating code respectively.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">Jun 10, 1:15 PM</span>
+                        <span class="meta-tag words">17 words</span>
+                        <span class="meta-tag duration">8s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-text">Yes, turn this into a task by task implementation checklist.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">Jun 10, 1:01 PM</span>
+                        <span class="meta-tag words">10 words</span>
+                        <span class="meta-tag duration">5s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-text">Great work. I now need you to create a structured plan for implementing these changes without breaking existing functionality.</div>
+                    <div class="activity-meta">
+                        <span class="meta-tag time">Jun 10, 12:48 PM</span>
+                        <span class="meta-tag words">19 words</span>
+                        <span class="meta-tag duration">7s</span>
+                        <span class="meta-action">&#128203; Add to Dictionary</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DICTIONARY PAGE -->
+        <div class="page" id="page-dictionary">
+            <div class="page-header">
+                <h1>
+                    <span class="header-icon">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h4l2 1.5L10 3h4v10h-4l-2 1.5L6 13H2V3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 4.5V14" stroke="currentColor" stroke-width="1.5"/></svg>
+                    </span>
+                    Dictionary
+                </h1>
+                <p>Custom word and phrase replacements for transcription accuracy.</p>
+            </div>
+
+            <button class="dict-add-btn">+ Add Replacement</button>
+
+            <table class="dict-table" style="margin-top: 20px;">
+                <thead>
+                    <tr>
+                        <th>Spoken Phrase</th>
+                        <th>Replacement</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>jasper voice</td>
+                        <td>JasperVoice</td>
+                        <td style="color: var(--fg-muted); cursor: pointer;">&#128465;</td>
+                    </tr>
+                    <tr>
+                        <td>pie side six</td>
+                        <td>PySide6</td>
+                        <td style="color: var(--fg-muted); cursor: pointer;">&#128465;</td>
+                    </tr>
+                    <tr>
+                        <td>python</td>
+                        <td>Python</td>
+                        <td style="color: var(--fg-muted); cursor: pointer;">&#128465;</td>
+                    </tr>
+                    <tr>
+                        <td>get hub</td>
+                        <td>GitHub</td>
+                        <td style="color: var(--fg-muted); cursor: pointer;">&#128465;</td>
+                    </tr>
+                    <tr>
+                        <td>open code</td>
+                        <td>OpenCode</td>
+                        <td style="color: var(--fg-muted); cursor: pointer;">&#128465;</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- SHORTCUTS PAGE -->
+        <div class="page" id="page-shortcuts">
+            <div class="page-header">
+                <h1>
+                    <span class="header-icon">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="4" width="13" height="8" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M4 7h2M7 7h2M10 7h2M5 9.5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                    </span>
+                    Shortcuts
+                </h1>
+                <p>Keyboard shortcuts and hotkey configuration.</p>
+            </div>
+
+            <div class="shortcut-row">
+                <span class="shortcut-label">Push to Talk (hold)</span>
+                <div class="shortcut-keys">
+                    <span class="key-badge">Ctrl</span>
+                    <span class="key-badge">Shift</span>
+                    <span class="key-badge">Space</span>
+                </div>
+            </div>
+            <div class="shortcut-row">
+                <span class="shortcut-label">Toggle Recording</span>
+                <div class="shortcut-keys">
+                    <span class="key-badge">Ctrl</span>
+                    <span class="key-badge">Shift</span>
+                    <span class="key-badge">R</span>
+                </div>
+            </div>
+            <div class="shortcut-row">
+                <span class="shortcut-label">Open Settings</span>
+                <div class="shortcut-keys">
+                    <span class="key-badge">Ctrl</span>
+                    <span class="key-badge">,</span>
+                </div>
+            </div>
+            <div class="shortcut-row">
+                <span class="shortcut-label">Cancel Recording</span>
+                <div class="shortcut-keys">
+                    <span class="key-badge">Esc</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- SETTINGS PAGE -->
+        <div class="page" id="page-settings">
+            <div class="page-header">
+                <h1>
+                    <span class="header-icon">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                    </span>
+                    Settings
+                </h1>
+                <p>Customize appearance, transcription behavior, and model configuration.</p>
+            </div>
+
+            <!-- Transcription Mode -->
+            <div class="settings-section">
+                <div class="settings-section-header">
+                    <span class="section-icon">T</span>
+                    <h3>Transcription Mode</h3>
+                </div>
+                <p class="settings-section-desc">Choose how JasperVoice converts your speech to text.</p>
+
+                <div class="mode-cards">
+                    <div class="mode-card selected">
+                        <div class="mode-check">&#10003;</div>
+                        <div class="mode-icon">&#128187;</div>
+                        <div class="mode-title">Local</div>
+                        <div class="mode-desc">On-device transcription — fully private, no internet needed.</div>
+                        <div class="mode-tags">
+                            <span class="mode-tag">Private</span>
+                            <span class="mode-tag">Offline</span>
+                            <span class="mode-tag">English</span>
+                        </div>
+                    </div>
+                    <div class="mode-card">
+                        <div class="mode-icon" style="background: rgba(139, 138, 154, 0.1);">&#9729;</div>
+                        <div class="mode-title">Cloud</div>
+                        <div class="mode-desc">More accurate, faster, and supports 100+ languages.</div>
+                        <div class="mode-tags">
+                            <span class="mode-tag">180+ Languages</span>
+                            <span class="mode-tag">Fast</span>
+                            <span class="mode-tag">Accurate</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Local Model -->
+            <div class="settings-section">
+                <div class="settings-section-header">
+                    <span class="section-icon">&#9881;</span>
+                    <h3>Local Model</h3>
+                </div>
+                <p class="settings-section-desc">Select the on-device model that balances speed and accuracy for your workflow.</p>
+
+                <div class="model-list">
+                    <div class="model-item">
+                        <span class="model-name">Tiny (English)</span>
+                        <span class="model-size">75 MB</span>
+                        <span class="model-download">&#8595; Download required</span>
+                        <span class="model-radio"></span>
+                    </div>
+                    <div class="model-item selected">
+                        <span class="model-name">Base (English)</span>
+                        <span class="model-size">142 MB</span>
+                        <span class="model-radio"></span>
+                    </div>
+                    <div class="model-item">
+                        <span class="model-name">Small (English)</span>
+                        <span class="model-size">466 MB</span>
+                        <span class="model-download">&#8595; Download required</span>
+                        <span class="model-radio"></span>
+                    </div>
+                    <div class="model-item">
+                        <span class="model-name">Medium (English)</span>
+                        <span class="model-size">1500 MB</span>
+                        <span class="model-download">&#8595; Download required</span>
+                        <span class="model-radio"></span>
+                    </div>
+                    <div class="model-item">
+                        <span class="model-name">Large v3</span>
+                        <span class="model-size">3100 MB</span>
+                        <span class="model-download">&#8595; Download required</span>
+                        <span class="model-radio"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- General -->
+            <div class="settings-section">
+                <div class="settings-section-header">
+                    <span class="section-icon">&#9881;</span>
+                    <h3>General</h3>
+                </div>
+                <p class="settings-section-desc">Core transcription and behavior settings.</p>
+
+                <div class="settings-field">
+                    <div>
+                        <div class="field-label">Hotkey</div>
+                        <div class="field-sublabel">Push-to-talk activation key</div>
+                    </div>
+                    <div class="field-value">
+                        <span class="hotkey-display">Ctrl+Shift+Space</span>
+                    </div>
+                </div>
+                <div class="settings-field">
+                    <div>
+                        <div class="field-label">Mode</div>
+                        <div class="field-sublabel">How recording is triggered</div>
+                    </div>
+                    <div class="field-value">
+                        <select class="field-select">
+                            <option>Push to Talk</option>
+                            <option>Toggle</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="settings-field">
+                    <div>
+                        <div class="field-label">Language</div>
+                        <div class="field-sublabel">Primary transcription language</div>
+                    </div>
+                    <div class="field-value">
+                        <select class="field-select">
+                            <option>Portugues</option>
+                            <option>English</option>
+                            <option>Espanol</option>
+                            <option>Auto-detect</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="settings-field">
+                    <div>
+                        <div class="field-label">Compute Device</div>
+                        <div class="field-sublabel">Hardware for model inference</div>
+                    </div>
+                    <div class="field-value">
+                        <select class="field-select">
+                            <option>Auto</option>
+                            <option>CPU</option>
+                            <option>GPU (CUDA)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="settings-field">
+                    <div>
+                        <div class="field-label">Paste Delay</div>
+                        <div class="field-sublabel">Delay before clipboard injection (ms)</div>
+                    </div>
+                    <div class="field-value">
+                        <span class="hotkey-display">15 ms</span>
+                    </div>
+                </div>
+                <div class="settings-field">
+                    <div>
+                        <div class="field-label">Min Recording</div>
+                        <div class="field-sublabel">Minimum recording length to process</div>
+                    </div>
+                    <div class="field-value">
+                        <span class="hotkey-display">200 ms</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CHANGELOG PAGE -->
+        <div class="page" id="page-changelog">
+            <div class="page-header">
+                <h1>
+                    <span class="header-icon">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5"/><path d="M6 5h4M6 8h4M6 11h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                    </span>
+                    Changelog
+                </h1>
+                <p>What's new in JasperVoice.</p>
+            </div>
+
+            <div class="activity-item" style="padding-top: 0;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="font-size: 14px; font-weight: 600; color: var(--fg);">v0.1.0</span>
+                    <span class="meta-tag time">Jun 2025</span>
+                </div>
+                <div class="activity-text" style="color: var(--fg-muted);">
+                    &bull; Initial release<br>
+                    &bull; Push-to-talk and toggle modes<br>
+                    &bull; Whisper local transcription (tiny through large-v3)<br>
+                    &bull; Developer dictionary for phrase replacement<br>
+                    &bull; Recording overlay indicator<br>
+                    &bull; Transcription history tracking<br>
+                    &bull; System tray integration
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Simple page navigation
+        document.querySelectorAll('[data-page]').forEach(el => {
+            el.addEventListener('click', () => {
+                const page = el.dataset.page;
+                
+                // Update nav
+                document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+                document.querySelector(`.nav-item[data-page="${page}"]`)?.classList.add('active');
+                
+                // Update page
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                document.getElementById(`page-${page}`)?.classList.add('active');
+            });
+        });
+
+        // Mode card selection
+        document.querySelectorAll('.mode-card').forEach(card => {
+            card.addEventListener('click', () => {
+                document.querySelectorAll('.mode-card').forEach(c => {
+                    c.classList.remove('selected');
+                    const check = c.querySelector('.mode-check');
+                    if (check) check.remove();
+                });
+                card.classList.add('selected');
+                const check = document.createElement('div');
+                check.className = 'mode-check';
+                check.innerHTML = '&#10003;';
+                card.appendChild(check);
+            });
+        });
+
+        // Model selection
+        document.querySelectorAll('.model-item').forEach(item => {
+            item.addEventListener('click', () => {
+                document.querySelectorAll('.model-item').forEach(i => i.classList.remove('selected'));
+                item.classList.add('selected');
+            });
+        });
+    </script>
+</body>
+</html>

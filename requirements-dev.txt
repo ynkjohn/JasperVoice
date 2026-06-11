@@ -1,0 +1,4 @@
+pytest==8.3.3
+pytest-qt==4.4.0
+pyinstaller==6.20.0
+

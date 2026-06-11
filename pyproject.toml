@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jaspervoice"
+version = "0.1.0"
+description = "Local push-to-talk voice dictation for Windows (Whisper + global hotkey + universal text injection)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "PySide6==6.8.1",
+    "faster-whisper==1.2.1",
+    "sounddevice==0.5.1",
+    "keyboard==0.13.5",
+    "pyperclip==1.9.0",
+    "numpy==2.1.3",
+]
+
+[project.scripts]
+jaspervoice = "jaspervoice.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+pythonpath = ["src"]

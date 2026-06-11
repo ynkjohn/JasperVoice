@@ -1,0 +1,29 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="JasperVoice">
+  <title>JasperVoice</title>
+
+  <!-- Background: dark rounded square (technical minimalism) -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#0F0F0F"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="51.5" stroke="#2A2A2A" stroke-width="1"/>
+
+  <!-- Sound waves flanking the mic -->
+  <g stroke="#9E9A9A" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.55">
+    <path d="M64 104 a 26 26 0 0 0 0 48"/>
+    <path d="M192 104 a 26 26 0 0 1 0 48"/>
+  </g>
+  <g stroke="#D97757" stroke-width="6" stroke-linecap="round" fill="none">
+    <path d="M48 86 a 52 52 0 0 0 0 84"/>
+    <path d="M208 86 a 52 52 0 0 1 0 84"/>
+  </g>
+
+  <!-- Microphone capsule -->
+  <rect x="104" y="56" width="48" height="92" rx="24" fill="#D97757"/>
+  <!-- Inner highlight dot (echoes the tray/overlay dot motif) -->
+  <circle cx="128" cy="82" r="9" fill="#0F0F0F" opacity="0.35"/>
+
+  <!-- Mic cradle (the U-shaped pickup) -->
+  <path d="M88 128 a 40 40 0 0 0 80 0" stroke="#E8E6E6" stroke-width="9" stroke-linecap="round" fill="none"/>
+
+  <!-- Stand -->
+  <line x1="128" y1="168" x2="128" y2="196" stroke="#E8E6E6" stroke-width="9" stroke-linecap="round"/>
+  <line x1="100" y1="196" x2="156" y2="196" stroke="#E8E6E6" stroke-width="9" stroke-linecap="round"/>
+</svg>
