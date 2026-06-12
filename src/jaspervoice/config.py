@@ -40,11 +40,26 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # --- Updates (GitHub Releases). All optional; the app runs fine offline. ---
     "update_check_enabled": True,
     "update_repo": "ynkjohn/JasperVoice",
+    # --- Startup & system ---
+    "launch_at_login": False,
+    "start_minimized": True,
+    # --- Overlay ---
+    "show_overlay": True,
+    "overlay_position": "bottom_right",
+    # --- Audio capture ---
+    "input_device": "default",
+    "noise_gate_enabled": False,
+    "sound_feedback": "off",
+    # --- Engine ---
+    "warmup_on_launch": True,
 }
 
 VALID_PROVIDERS = {"none", "opencode"}
 
 VALID_HOTKEY_MODES = {"push_to_talk", "toggle"}
+
+VALID_OVERLAY_POSITIONS = {"top_left", "top_right", "bottom_left", "bottom_right"}
+VALID_SOUND_FEEDBACK = {"off", "subtle", "all"}
 
 VALID_MODEL_SIZES = {"tiny", "base", "small", "medium", "large-v3"}
 VALID_COMPUTE_TYPES = {"int8", "int16", "float16", "float32"}
@@ -142,7 +157,12 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
             phrase = str(entry.get("phrase", "")).strip()
             replacement = str(entry.get("replacement", "")).strip()
             if phrase and replacement:
-                cleaned.append({"phrase": phrase, "replacement": replacement})
+                item = {"phrase": phrase, "replacement": replacement}
+                # Entries without "enabled" behave as enabled=True; only the
+                # disabled flag is serialized so old config files stay unchanged.
+                if not bool(entry.get("enabled", True)):
+                    item["enabled"] = False
+                cleaned.append(item)
         out["dictionary"] = cleaned
     if not isinstance(out.get("update_check_enabled"), bool):
         log.warning("Invalid update_check_enabled %r, falling back to True", out.get("update_check_enabled"))
@@ -150,6 +170,20 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(out.get("update_repo"), str) or not out["update_repo"].strip():
         log.warning("Invalid update_repo %r, falling back to default", out.get("update_repo"))
         out["update_repo"] = DEFAULT_CONFIG["update_repo"]
+    for key in ("launch_at_login", "start_minimized", "show_overlay",
+                "noise_gate_enabled", "warmup_on_launch"):
+        if not isinstance(out.get(key), bool):
+            log.warning("Invalid %s %r, falling back to %r", key, out.get(key), DEFAULT_CONFIG[key])
+            out[key] = DEFAULT_CONFIG[key]
+    if out.get("overlay_position") not in VALID_OVERLAY_POSITIONS:
+        log.warning("Invalid overlay_position %r, falling back to 'bottom_right'", out.get("overlay_position"))
+        out["overlay_position"] = DEFAULT_CONFIG["overlay_position"]
+    if not isinstance(out.get("input_device"), str) or not out["input_device"].strip():
+        log.warning("Invalid input_device %r, falling back to 'default'", out.get("input_device"))
+        out["input_device"] = DEFAULT_CONFIG["input_device"]
+    if out.get("sound_feedback") not in VALID_SOUND_FEEDBACK:
+        log.warning("Invalid sound_feedback %r, falling back to 'off'", out.get("sound_feedback"))
+        out["sound_feedback"] = DEFAULT_CONFIG["sound_feedback"]
     return out
 
 

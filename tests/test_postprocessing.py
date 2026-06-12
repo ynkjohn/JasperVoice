@@ -339,3 +339,84 @@ def test_opencode_success_with_info_logging_does_not_raise(caplog):
     assert "key-12345" not in logs
     assert "hello world" not in logs
     assert "opencode" in logs.lower() or "OpenCode" in logs
+
+
+# --- Model list fetching (AI Polish "Fetch models") ---
+
+def test_build_models_url_appends_v1():
+    from jaspervoice.postprocessing import _build_models_url
+
+    assert _build_models_url("https://api.example.com") == "https://api.example.com/v1/models"
+    assert _build_models_url("http://localhost:11434/v1") == "http://localhost:11434/v1/models"
+    assert _build_models_url("http://host/v1/") == "http://host/v1/models"
+
+
+def test_fetch_available_models_parses_openai_shape():
+    from jaspervoice.postprocessing import fetch_available_models
+
+    def fake_get(url, headers, timeout):
+        assert url.endswith("/v1/models")
+        return json.dumps({"data": [{"id": "b-model"}, {"id": "a-model"}, {"id": "a-model"}]}).encode()
+
+    models = fetch_available_models("http://localhost:1234", request_fn=fake_get)
+    assert models == ["a-model", "b-model"]  # sorted, deduplicated
+
+
+def test_fetch_available_models_accepts_bare_list():
+    from jaspervoice.postprocessing import fetch_available_models
+
+    def fake_get(url, headers, timeout):
+        return json.dumps(["m2", "m1"]).encode()
+
+    assert fetch_available_models("http://x/v1", request_fn=fake_get) == ["m1", "m2"]
+
+
+def test_fetch_available_models_sends_bearer_when_key_set(monkeypatch):
+    from jaspervoice.postprocessing import fetch_available_models
+
+    monkeypatch.setenv("MY_TEST_KEY", "sekret")
+    seen = {}
+
+    def fake_get(url, headers, timeout):
+        seen.update(headers)
+        return json.dumps({"data": [{"id": "m"}]}).encode()
+
+    fetch_available_models("http://x", api_key_env="MY_TEST_KEY", request_fn=fake_get)
+    assert seen.get("Authorization") == "Bearer sekret"
+
+
+def test_fetch_available_models_no_key_omits_auth(monkeypatch):
+    from jaspervoice.postprocessing import fetch_available_models
+
+    monkeypatch.delenv("NOPE_KEY", raising=False)
+    seen = {}
+
+    def fake_get(url, headers, timeout):
+        seen.update(headers)
+        return json.dumps({"data": [{"id": "m"}]}).encode()
+
+    fetch_available_models("http://x", api_key_env="NOPE_KEY", request_fn=fake_get)
+    assert "Authorization" not in seen
+
+
+def test_fetch_available_models_empty_endpoint_raises():
+    from jaspervoice.postprocessing import fetch_available_models
+
+    with pytest.raises(PostProcessorError):
+        fetch_available_models("   ")
+
+
+def test_fetch_available_models_bad_json_raises():
+    from jaspervoice.postprocessing import fetch_available_models
+
+    with pytest.raises(PostProcessorError):
+        fetch_available_models("http://x", request_fn=lambda u, h, t: b"not json")
+
+
+def test_fetch_available_models_empty_list_raises():
+    from jaspervoice.postprocessing import fetch_available_models
+
+    with pytest.raises(PostProcessorError):
+        fetch_available_models(
+            "http://x", request_fn=lambda u, h, t: json.dumps({"data": []}).encode()
+        )

@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 class DictionaryEntry:
     phrase: str
     replacement: str
+    enabled: bool = True
 
 
 class DeveloperDictionary:
@@ -37,12 +38,15 @@ class DeveloperDictionary:
         if entries is not None:
             parsed = sorted(self._parse_entries(entries), key=lambda e: -len(e.phrase))
             self._entries = parsed
+            # Disabled rules are kept in _entries (so callers can list them)
+            # but never compiled, so apply() ignores them.
             self._compiled = [
                 (
                     re.compile(rf"(?<!\w){re.escape(e.phrase)}(?!\w)", re.IGNORECASE),
                     e.replacement,
                 )
                 for e in parsed
+                if e.enabled
             ]
 
     @staticmethod
@@ -59,16 +63,18 @@ class DeveloperDictionary:
         if isinstance(item, DictionaryEntry):
             phrase = item.phrase.strip()
             replacement = item.replacement.strip()
+            enabled = bool(item.enabled)
         elif isinstance(item, dict):
             phrase = str(item.get("phrase", "")).strip()
             replacement = str(item.get("replacement", "")).strip()
+            enabled = bool(item.get("enabled", True))
         else:
             log.warning("Skipping invalid dictionary entry: %r", item)
             return None
         if not phrase or not replacement:
             log.warning("Skipping dictionary entry with empty phrase or replacement: %r", item)
             return None
-        return DictionaryEntry(phrase=phrase, replacement=replacement)
+        return DictionaryEntry(phrase=phrase, replacement=replacement, enabled=enabled)
 
     def apply(self, text: str) -> str:
         """Apply all dictionary replacements to `text`.

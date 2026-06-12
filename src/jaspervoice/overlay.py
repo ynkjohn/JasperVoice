@@ -72,6 +72,7 @@ class RecordingOverlay(QWidget):
         self.setWindowOpacity(0.0)
 
         self._state = "idle"
+        self._corner = "bottom_right"
         self._pill_width = float(PILL_IDLE_SIZE)
         self._levels = [0.0] * NUM_BANDS
         self._bar_heights = [BAR_MIN_HEIGHT] * NUM_BANDS
@@ -118,6 +119,15 @@ class RecordingOverlay(QWidget):
 
     def state(self) -> str:
         return self._state
+
+    def set_position(self, corner: str) -> None:
+        """Anchor the pill to a screen corner: top_left, top_right,
+        bottom_left, or bottom_right (config key `overlay_position`)."""
+        if corner not in ("top_left", "top_right", "bottom_left", "bottom_right"):
+            log.warning("Unknown overlay corner %r", corner)
+            return
+        self._corner = corner
+        self._position_in_corner()
 
     @Slot(list)
     def _on_levels_updated(self, bands: list) -> None:
@@ -192,8 +202,14 @@ class RecordingOverlay(QWidget):
         geom = screen.availableGeometry()
         w = self.width()
         h = self.height()
-        x = geom.right() - w - MARGIN_PX + 1
-        y = geom.bottom() - h - MARGIN_PX + 1
+        if self._corner.endswith("left"):
+            x = geom.left() + MARGIN_PX
+        else:
+            x = geom.right() - w - MARGIN_PX + 1
+        if self._corner.startswith("top"):
+            y = geom.top() + MARGIN_PX
+        else:
+            y = geom.bottom() - h - MARGIN_PX + 1
         self.move(QPoint(x, y))
 
     @staticmethod

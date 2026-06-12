@@ -41,6 +41,11 @@ class Recorder:
     def is_active(self) -> bool:
         return self._active
 
+    def set_device(self, device: Optional[int | str]) -> None:
+        """Change the requested input device (None = system default).
+        Takes effect on the next start(); an in-flight recording is untouched."""
+        self._requested_device = device
+
     def _resolve_device(self) -> Optional[int | str]:
         if self._requested_device is not None:
             return self._requested_device

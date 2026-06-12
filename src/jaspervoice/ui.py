@@ -1,795 +1,555 @@
-"""Settings window for JasperVoice (dark theme, non-modal, live-apply)."""
+"""JasperVoice main settings window — a navigable shell with sidebar, pages,
+working search, and a dirty-state save bar — plus the update dialog.
+
+Layout:
+
+    +------------+----------------------------------------------+
+    | brand      |  page header                                 |
+    | search     |  page content (scrollable)                   |
+    | nav groups |                                              |
+    | ...        |                                              |
+    | status     |----------------------------------------------|
+    +------------+  status bar: state · summary · save controls |
+
+Pages live in `ui_pages.py`; shared primitives in `ui_widgets.py`. The window
+is non-modal, X hides it (the app keeps running in the tray), and `configChanged`
+is emitted with the full config dict whenever the user applies changes — the
+app hot-reloads from that signal exactly as before.
+
+Threading: the update check/download run on QThreads (`_CheckWorker`,
+`_DownloadWorker`); the mic meter audio callback emits a Signal that is queued
+to the UI thread. No widget is ever touched from a non-Qt thread.
+"""
 
 from __future__ import annotations
 
 import logging
-import os
-import platform
-import subprocess
-import sys
 from copy import deepcopy
-from typing import Optional
+from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup,
-    QCheckBox,
-    QComboBox,
-    QFileDialog,
+    QApplication,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
-    QHeaderView,
-    QKeySequenceEdit,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QRadioButton,
     QScrollArea,
-    QSizePolicy,
-    QSpinBox,
-    QTableWidget,
-    QTableWidgetItem,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import QThread
 
 from . import __version__
 from . import config as cfg_mod
-from .config import (
-    DEFAULT_CONFIG,
-    VALID_COMPUTE_TYPES,
-    VALID_DEVICES,
-    VALID_MODEL_SIZES,
-    get_app_dir,
-    get_models_dir,
+from .ui_pages import PAGE_CLASSES, BasePage
+from .theme import COLORS
+from .ui_widgets import (  # noqa: F401  (re-exported: tests import these from here)
+    LANGUAGES,
+    MicLevelSource,
+    glyph_icon,
+    keyboard_to_qt,
+    qt_to_keyboard,
 )
 
 log = logging.getLogger(__name__)
 
 
-# --- Hotkey format conversion (Qt <-> keyboard-lib) ---
-
-# Tokens that don't title-case cleanly. Map them explicitly; anything else
-# passes through .title() (handles single letters, f1-f24, digits).
-_TOKEN_TITLE = {
-    "ctrl": "Ctrl",
-    "shift": "Shift",
-    "alt": "Alt",
-    "altgr": "AltGr",
-    "meta": "Meta",
-    "super": "Super",
-    "space": "Space",
-    "tab": "Tab",
-    "enter": "Enter",
-    "return": "Return",
-    "esc": "Esc",
-    "escape": "Escape",
-    "backspace": "Backspace",
-    "delete": "Delete",
-    "del": "Delete",
-    "insert": "Insert",
-    "home": "Home",
-    "end": "End",
-    "pgup": "PgUp",
-    "pageup": "PgUp",
-    "pgdown": "PgDown",
-    "pagedown": "PgDown",
-    "up": "Up",
-    "down": "Down",
-    "left": "Left",
-    "right": "Right",
-    "capslock": "CapsLock",
-    "numlock": "NumLock",
-    "scrolllock": "ScrollLock",
-    "printscreen": "PrintScreen",
-    "menu": "Menu",
+# App-state shown in the window status areas: state -> (label, lamp color)
+WINDOW_STATES = {
+    "idle": ("READY", "#22c55e"),
+    "recording": ("RECORDING", "#ef4444"),
+    "processing": ("PROCESSING", "#f59e0b"),
+    "send": ("SENT", "#22c55e"),
+    "error": ("ERROR", "#ef4444"),
 }
 
-
-def keyboard_to_qt(s: str) -> QKeySequence:
-    """Convert keyboard-lib format ('ctrl+shift+r') to QKeySequence."""
-    parts = [p.strip() for p in s.lower().split("+") if p.strip()]
-    qt_parts = [_TOKEN_TITLE.get(p, p.title()) for p in parts]
-    return QKeySequence("+".join(qt_parts))
-
-
-def qt_to_keyboard(seq: QKeySequence) -> str:
-    """Convert QKeySequence to keyboard-lib format. Returns empty string if no keys set."""
-    s = seq.toString()
-    if not s:
-        return ""
-    # Qt's toString() returns tokens already separated by '+'. We need the
-    # reverse of _TOKEN_TITLE, but .lower() works for every entry because
-    # the canonical Qt names are the same words as the keyboard-lib tokens.
-    return s.lower()
-
-
-# --- Languages ---
-
-LANGUAGES = [
-    ("pt", "Português"),
-    ("en", "English"),
-    ("es", "Español"),
-    ("auto", "Auto-detect"),
+NAV_GROUPS = [
+    ("WORKSPACE", ["overview", "history", "dictionary"]),
+    ("CONFIGURE", ["general", "audio", "model", "polish", "updates"]),
+    ("SYSTEM", ["diagnostics"]),
 ]
 
-
-# Ordered + human-friendly labels for the radio groups. Anything not listed
-# here still renders (falls back to the raw key) so new config values won't
-# silently disappear from the UI.
-MODEL_ORDER = ["tiny", "base", "small", "medium", "large-v3"]
-MODEL_HINTS = {
-    "tiny": "Fastest, lowest accuracy",
-    "base": "Fast, basic accuracy",
-    "small": "Balanced — recommended",
-    "medium": "Slower, higher accuracy",
-    "large-v3": "Slowest, best accuracy",
+# page id -> painted glyph for the sidebar
+NAV_GLYPHS = {
+    "overview": "grid",
+    "history": "clock",
+    "dictionary": "book",
+    "general": "sliders",
+    "audio": "mic",
+    "model": "chip",
+    "polish": "spark",
+    "updates": "download",
+    "diagnostics": "pulse",
 }
 
-DEVICE_ORDER = ["auto", "cpu", "cuda"]
-DEVICE_LABELS = {
-    "auto": "Auto",
-    "cpu": "CPU",
-    "cuda": "GPU (CUDA)",
-}
+# Pages that participate in load_from/collect_into (the dirty/apply cycle).
+SETTINGS_PAGE_IDS = ["general", "audio", "model", "polish", "updates"]
 
-COMPUTE_ORDER = ["int8", "int16", "float16", "float32"]
-COMPUTE_LABELS = {
-    "int8": "int8",
-    "int16": "int16",
-    "float16": "float16",
-    "float32": "float32",
-}
-
-
-def _ordered_keys(valid: set[str], order: list[str]) -> list[str]:
-    """Return keys from `valid` in `order`, appending any extras at the end."""
-    ordered = [k for k in order if k in valid]
-    ordered += [k for k in valid if k not in order]
-    return ordered
-
-
-# --- Label helpers ---
-
-def _section_label(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setProperty("role", "section")
-    return lbl
-
-
-def _muted_label(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setProperty("role", "muted")
-    lbl.setWordWrap(True)
-    return lbl
-
-
-def _field_label(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setProperty("role", "fieldlabel")
-    return lbl
-
-
-def _hint_label(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setProperty("role", "hint")
-    lbl.setWordWrap(True)
-    return lbl
-
-
-def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
-    """Build a titled card container; returns (frame, content_layout)."""
-    frame = QFrame()
-    frame.setProperty("role", "card")
-    box = QVBoxLayout(frame)
-    box.setContentsMargins(18, 14, 18, 16)
-    box.setSpacing(10)
-
-    header = QLabel(title)
-    header.setProperty("role", "section")
-    box.addWidget(header)
-    return frame, box
-
-
-# --- Settings window ---
 
 class SettingsWindow(QMainWindow):
-    """JasperVoice settings dialog. Non-modal, X hides, Apply/Cancel footer."""
+    """Navigable settings/main window. Non-modal; X hides; Apply persists."""
 
     configChanged = Signal(dict)
+    testDictationRequested = Signal()
 
-    def __init__(self, cfg: dict, parent: Optional[QObject] = None):
+    def __init__(self, cfg: dict, history=None, parent: Optional[QObject] = None):
         super().__init__(parent)
-        self.setWindowTitle("JasperVoice — Settings")
-        self.setMinimumSize(640, 520)
-        self.resize(800, 560)
+        self.setWindowTitle("JasperVoice")
+        self.setMinimumSize(900, 600)
+        self.resize(1120, 720)
 
-        # Working copy of config; updated on Apply.
         self._cfg = deepcopy(cfg)
-        # Slight extensions for v1 UI fields. Falls back to sensible defaults
-        # if older config.json doesn't have them.
-        self._cfg.setdefault("paste_delay_ms", 15)
-        self._cfg.setdefault("min_recording_ms", 200)
-
+        self._history = history
         self._dirty = False
+        self._loading = False
+        self._runtime_provider: Optional[Callable[[], dict]] = None
+        self._update_dialog = None
+        self._meter_paused = False
+
+        self.mic_source = MicLevelSource(self)
+
+        self._pages: dict[str, BasePage] = {}
+        self._nav_buttons: dict[str, QPushButton] = {}
+        self._nav_group_labels: list[tuple[QLabel, list[str]]] = []
+        self._current_page_id = "overview"
 
         self._build_ui()
         self._load_values_into_ui()
-        self.apply_btn.setEnabled(False)
+        self.set_app_state("idle")
+        self.show_page("overview")
 
-    # --- Construction ---
+    # --- Shell surface used by pages ---
 
-    def _build_ui(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+    @property
+    def saved_cfg(self) -> dict:
+        return self._cfg
 
-        # --- Header band ---
-        header_band = QWidget()
-        header_band.setObjectName("headerBand")
-        hb = QVBoxLayout(header_band)
-        hb.setContentsMargins(28, 22, 28, 18)
-        hb.setSpacing(2)
-        title = QLabel("JASPERVOICE")
-        title.setProperty("role", "title")
-        hb.addWidget(title)
-        subtitle = QLabel("Push-to-talk voice dictation")
-        subtitle.setProperty("role", "subtitle")
-        hb.addWidget(subtitle)
-        root.addWidget(header_band)
+    @property
+    def history(self):
+        return self._history
 
-        divider = QFrame()
-        divider.setProperty("role", "divider")
-        root.addWidget(divider)
+    def page(self, page_id: str) -> Optional[BasePage]:
+        return self._pages.get(page_id)
 
-        # --- Scrollable body (cards) ---
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        body = QWidget()
-        scroll.setWidget(body)
-        # Outer layout centers a fixed-width column so maximizing the window
-        # doesn't stretch the cards across the whole screen.
-        outer = QHBoxLayout(body)
-        outer.setContentsMargins(24, 20, 24, 20)
-        outer.setSpacing(0)
-        outer.addStretch(1)
+    def set_runtime_provider(self, provider: Callable[[], dict]) -> None:
+        """`provider` is called on the UI thread and returns live app info,
+        e.g. {"resolved_device": "cuda", "model_loaded": True, "last_duration_s": 3.2}."""
+        self._runtime_provider = provider
 
-        column = QWidget()
-        column.setMaximumWidth(720)
-        column.setStyleSheet("background: transparent;")
-        content = QVBoxLayout(column)
-        content.setContentsMargins(0, 0, 0, 0)
-        content.setSpacing(16)
-
-        content.addWidget(self._build_general_card())
-        content.addWidget(self._build_whisper_card())
-        content.addWidget(self._build_behavior_card())
-        content.addWidget(self._build_updates_card())
-        content.addWidget(self._build_diagnostics_card())
-        content.addStretch(1)
-
-        outer.addWidget(column, 0)
-        outer.addStretch(1)
-
-        root.addWidget(scroll, 1)
-
-        # --- Footer band ---
-        footer_band = QWidget()
-        footer_band.setObjectName("footerBand")
-        fb = QHBoxLayout(footer_band)
-        fb.setContentsMargins(24, 14, 24, 16)
-        fb.setSpacing(10)
-        self.status_hint = QLabel("")
-        self.status_hint.setProperty("role", "hint")
-        fb.addWidget(self.status_hint)
-        fb.addStretch(1)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self._on_cancel)
-        self.apply_btn = QPushButton("Apply")
-        self.apply_btn.setProperty("primary", True)
-        self.apply_btn.setDefault(True)
-        self.apply_btn.clicked.connect(self._on_apply)
-        fb.addWidget(self.cancel_btn)
-        fb.addWidget(self.apply_btn)
-
-        top_divider = QFrame()
-        top_divider.setProperty("role", "divider")
-        root.addWidget(top_divider)
-        root.addWidget(footer_band)
-
-    # --- Card builders ---
-
-    def _build_general_card(self) -> QFrame:
-        frame, box = _card("General")
-        grid = self._field_grid()
-
-        self.hotkey_edit = QKeySequenceEdit()
-        self.hotkey_edit.setMaximumWidth(240)
-        self.hotkey_edit.editingFinished.connect(self._mark_dirty)
-        self._add_field(
-            grid, 0, "Hotkey", self.hotkey_edit,
-            "Hold to record, release to transcribe.",
-        )
-
-        self.hotkey_mode_combo = QComboBox()
-        self.hotkey_mode_combo.setMaximumWidth(240)
-        self.hotkey_mode_combo.addItem("Push to talk", "push_to_talk")
-        self.hotkey_mode_combo.addItem("Toggle (press to start/stop)", "toggle")
-        self.hotkey_mode_combo.currentIndexChanged.connect(self._mark_dirty)
-        self._add_field(
-            grid, 1, "Mode", self.hotkey_mode_combo,
-            "Push to talk: hold to record. Toggle: press once to start, again to stop.",
-        )
-
-        self.lang_combo = QComboBox()
-        self.lang_combo.setMaximumWidth(240)
-        for code, label in LANGUAGES:
-            self.lang_combo.addItem(label, code)
-        self.lang_combo.currentIndexChanged.connect(self._mark_dirty)
-        self._add_field(
-            grid, 2, "Language", self.lang_combo,
-            "Spoken language. Auto-detect picks per recording.",
-        )
-
-        box.addLayout(grid)
-        return frame
-
-    def _build_whisper_card(self) -> QFrame:
-        frame, box = _card("Whisper Model")
-
-        self._model_group = QButtonGroup(self)
-        self._model_radios = {}
-        for size in _ordered_keys(VALID_MODEL_SIZES, MODEL_ORDER):
-            rb = QRadioButton(size)
-            rb.setToolTip(MODEL_HINTS.get(size, ""))
-            rb.toggled.connect(self._mark_dirty)
-            self._model_group.addButton(rb)
-            self._model_radios[size] = rb
-        box.addLayout(self._radio_row("Model", self._model_radios))
-        box.addWidget(_hint_label(
-            "Larger models are more accurate but slower. "
-            "small is the balanced default for dictation."
-        ))
-
-        self._device_group = QButtonGroup(self)
-        self._device_radios = {}
-        for dev in _ordered_keys(VALID_DEVICES, DEVICE_ORDER):
-            rb = QRadioButton(DEVICE_LABELS.get(dev, dev))
-            rb.toggled.connect(self._mark_dirty)
-            self._device_group.addButton(rb)
-            self._device_radios[dev] = rb
-        box.addLayout(self._radio_row("Device", self._device_radios))
-
-        self._compute_group = QButtonGroup(self)
-        self._compute_radios = {}
-        for ct in _ordered_keys(VALID_COMPUTE_TYPES, COMPUTE_ORDER):
-            rb = QRadioButton(COMPUTE_LABELS.get(ct, ct))
-            rb.toggled.connect(self._mark_dirty)
-            self._compute_group.addButton(rb)
-            self._compute_radios[ct] = rb
-        box.addLayout(self._radio_row("Compute", self._compute_radios))
-        box.addWidget(_hint_label(
-            "int8 is best on CPU. Use float16 on GPU for speed and accuracy."
-        ))
-        return frame
-
-    def _build_behavior_card(self) -> QFrame:
-        frame, box = _card("Behavior")
-        grid = self._field_grid()
-
-        self.paste_delay = QSpinBox()
-        self.paste_delay.setRange(0, 200)
-        self.paste_delay.setSuffix(" ms")
-        self.paste_delay.setSingleStep(5)
-        self.paste_delay.setMaximumWidth(120)
-        self.paste_delay.valueChanged.connect(self._mark_dirty)
-        self._add_field(
-            grid, 0, "Paste delay", self.paste_delay,
-            "Pause before pasting. Raise if text arrives truncated.",
-        )
-
-        self.min_duration = QSpinBox()
-        self.min_duration.setRange(50, 2000)
-        self.min_duration.setSuffix(" ms")
-        self.min_duration.setSingleStep(50)
-        self.min_duration.setMaximumWidth(120)
-        self.min_duration.valueChanged.connect(self._mark_dirty)
-        self._add_field(
-            grid, 1, "Min recording", self.min_duration,
-            "Recordings shorter than this are ignored.",
-        )
-
-        box.addLayout(grid)
-        return frame
-
-    def _build_updates_card(self) -> QFrame:
-        frame, box = _card("Updates")
-
-        self.update_check_enabled = QCheckBox(
-            "Check GitHub for updates when JasperVoice starts"
-        )
-        self.update_check_enabled.toggled.connect(self._mark_dirty)
-        box.addWidget(self.update_check_enabled)
-        box.addWidget(_hint_label(
-            "Only the public release list is queried — no account, no telemetry, "
-            "and no source code is downloaded. Updates install from a signed, "
-            "checksum-verified installer. JasperVoice works fully offline if this "
-            "is off or the check fails."
-        ))
-
-        grid = self._field_grid()
-        self.update_repo_edit = QLineEdit()
-        self.update_repo_edit.setMaximumWidth(280)
-        self.update_repo_edit.setPlaceholderText("owner/repo")
-        self.update_repo_edit.textChanged.connect(self._mark_dirty)
-        self._add_field(
-            grid, 0, "Release source", self.update_repo_edit,
-            "GitHub repository to check for releases (owner/repo).",
-        )
-        box.addLayout(grid)
-
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
-        btn_row.setSpacing(10)
-        check_btn = QPushButton("Check now...")
-        check_btn.setMaximumWidth(160)
-        check_btn.clicked.connect(self._open_update_dialog)
-        btn_row.addWidget(check_btn)
-        offline_btn = QPushButton("Install from file...")
-        offline_btn.setMaximumWidth(180)
-        offline_btn.clicked.connect(self._install_from_file)
-        btn_row.addWidget(offline_btn)
-        btn_row.addStretch(1)
-        box.addLayout(btn_row)
-        box.addWidget(_hint_label(
-            "\"Install from file\" runs an installer .exe you downloaded yourself "
-            "(offline / air-gapped). It is checked for integrity before running."
-        ))
-        return frame
-
-    def _build_diagnostics_card(self) -> QFrame:
-        frame, box = _card("Diagnostics")
-        grid = QGridLayout()
-        grid.setColumnStretch(1, 1)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(6)
-
-        self.config_path_label = QLabel(str(cfg_mod.get_config_path()))
-        self.config_path_label.setProperty("role", "mono")
-        self.config_path_label.setWordWrap(True)
-        self.config_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        grid.addWidget(_field_label("Config"), 0, 0, Qt.AlignmentFlag.AlignTop)
-        grid.addWidget(self.config_path_label, 0, 1)
-
-        self.models_path_label = QLabel(str(get_models_dir()))
-        self.models_path_label.setProperty("role", "mono")
-        self.models_path_label.setWordWrap(True)
-        self.models_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        grid.addWidget(_field_label("Models"), 1, 0, Qt.AlignmentFlag.AlignTop)
-        grid.addWidget(self.models_path_label, 1, 1)
-
-        self.version_label = QLabel(
-            f"v{__version__}  •  Python {platform.python_version()}  •  {sys.platform}"
-        )
-        self.version_label.setProperty("role", "muted")
-        grid.addWidget(_field_label("Version"), 2, 0)
-        grid.addWidget(self.version_label, 2, 1)
-
-        box.addLayout(grid)
-
-        open_btn = QPushButton("Open config folder")
-        open_btn.setMaximumWidth(180)
-        open_btn.clicked.connect(self._open_config_folder)
-        box.addWidget(open_btn)
-        return frame
-
-    # --- Layout helpers ---
-
-    @staticmethod
-    def _field_grid() -> QGridLayout:
-        grid = QGridLayout()
-        grid.setColumnMinimumWidth(0, 110)
-        grid.setColumnStretch(1, 1)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(12)
-        return grid
-
-    def _add_field(
-        self, grid: QGridLayout, row: int, label: str, widget: QWidget, hint: str
-    ) -> None:
-        grid.addWidget(_field_label(label), row, 0, Qt.AlignmentFlag.AlignTop)
-        col = QVBoxLayout()
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(2)
-        col.addWidget(widget, 0, Qt.AlignmentFlag.AlignLeft)
-        if hint:
-            col.addWidget(_hint_label(hint))
-        wrapper = QWidget()
-        wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
-        wrapper.setStyleSheet("background: transparent;")
-        wrapper.setLayout(col)
-        grid.addWidget(wrapper, row, 1)
-
-    def _radio_row(self, label: str, radios: dict) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-        lbl = _field_label(label)
-        lbl.setMinimumWidth(110)
-        lbl.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-        row.addWidget(lbl, 0, Qt.AlignmentFlag.AlignTop)
-        radios_box = QHBoxLayout()
-        radios_box.setContentsMargins(0, 0, 0, 0)
-        radios_box.setSpacing(16)
-        for rb in radios.values():
-            radios_box.addWidget(rb)
-        radios_box.addStretch(1)
-        row.addLayout(radios_box, 1)
-        return row
-
-    # --- Load / collect ---
-
-    def _load_values_into_ui(self) -> None:
-        """Populate the form from self._cfg, blocking signals so this does
-        not mark the form dirty."""
-        widgets = self._all_input_widgets()
-        for w in widgets:
-            w.blockSignals(True)
+    def runtime_info(self) -> dict:
+        if self._runtime_provider is None:
+            return {}
         try:
-            try:
-                self.hotkey_edit.setKeySequence(keyboard_to_qt(self._cfg["hotkey"]))
-            except Exception:
-                self.hotkey_edit.setKeySequence(QKeySequence(DEFAULT_CONFIG["hotkey"]))
-            self._set_combo_by_data(self.lang_combo, self._cfg["language"])
-            self._set_combo_by_data(self.hotkey_mode_combo, self._cfg.get("hotkey_mode", "push_to_talk"))
-            self._check_radio(self._model_radios, self._cfg["model_size"], "small")
-            self._check_radio(self._device_radios, self._cfg["device"], "auto")
-            self._check_radio(self._compute_radios, self._cfg["compute_type"], "int8")
-            self.paste_delay.setValue(int(self._cfg.get("paste_delay_ms", 15)))
-            self.min_duration.setValue(int(self._cfg.get("min_recording_ms", 200)))
-            self.update_check_enabled.setChecked(bool(self._cfg.get("update_check_enabled", True)))
-            self.update_repo_edit.setText(str(self._cfg.get("update_repo", DEFAULT_CONFIG["update_repo"])))
-        finally:
-            for w in widgets:
-                w.blockSignals(False)
-        self._dirty = False
-        self.apply_btn.setEnabled(False)
-        if hasattr(self, "status_hint"):
-            self.status_hint.setText("")
-
-    def _all_input_widgets(self) -> list[QWidget]:
-        return [
-            self.hotkey_edit,
-            self.lang_combo,
-            self.hotkey_mode_combo,
-            self.paste_delay,
-            self.min_duration,
-            self.update_check_enabled,
-            self.update_repo_edit,
-            *self._model_radios.values(),
-            *self._device_radios.values(),
-            *self._compute_radios.values(),
-        ]
-
-    @staticmethod
-    def _set_combo_by_data(combo: QComboBox, data: str) -> None:
-        for i in range(combo.count()):
-            if combo.itemData(i) == data:
-                combo.setCurrentIndex(i)
-                return
-        combo.setCurrentIndex(0)
-
-    @staticmethod
-    def _check_radio(radios: dict[str, QRadioButton], key: str, fallback: str) -> None:
-        if key in radios:
-            radios[key].setChecked(True)
-        elif fallback in radios:
-            radios[fallback].setChecked(True)
-
-    def _collect_values(self) -> dict:
-        hotkey = qt_to_keyboard(self.hotkey_edit.keySequence())
-        if not hotkey:
-            hotkey = DEFAULT_CONFIG["hotkey"]
-        language = self.lang_combo.currentData() or DEFAULT_CONFIG["language"]
-        return {
-            **self._cfg,
-            "hotkey": hotkey,
-            "hotkey_mode": str(self.hotkey_mode_combo.currentData() or "push_to_talk"),
-            "language": str(language),
-            "model_size": self._checked_key(self._model_radios, "small"),
-            "device": self._checked_key(self._device_radios, "auto"),
-            "compute_type": self._checked_key(self._compute_radios, "int8"),
-            "paste_delay_ms": int(self.paste_delay.value()),
-            "min_recording_ms": int(self.min_duration.value()),
-            "update_check_enabled": bool(self.update_check_enabled.isChecked()),
-            "update_repo": self.update_repo_edit.text().strip() or DEFAULT_CONFIG["update_repo"],
-        }
-
-    @staticmethod
-    def _checked_key(radios: dict[str, QRadioButton], fallback: str) -> str:
-        for key, rb in radios.items():
-            if rb.isChecked():
-                return key
-        return fallback
-
-    # --- Apply / cancel ---
-
-    def _mark_dirty(self) -> None:
-        if not self._dirty:
-            self._dirty = True
-            self.apply_btn.setEnabled(True)
-            self.status_hint.setText("Unsaved changes")
-
-    def _on_apply(self) -> None:
-        new_cfg = self._collect_values()
-        self._cfg = new_cfg
-        cfg_mod.save_config(new_cfg)
-        self.configChanged.emit(new_cfg)
-        self._dirty = False
-        self.apply_btn.setEnabled(False)
-        self.status_hint.setText("Saved")
-
-    def _on_cancel(self) -> None:
-        self._load_values_into_ui()
-
-    # --- Other actions ---
-
-    def _open_config_folder(self) -> None:
-        path = str(get_app_dir())
-        try:
-            if sys.platform == "win32":
-                os.startfile(path)  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", path])
-            else:
-                subprocess.Popen(["xdg-open", path])
+            info = self._runtime_provider()
+            return info if isinstance(info, dict) else {}
         except Exception as e:
-            log.error("Could not open config folder %s: %s", path, e)
+            log.warning("Runtime provider failed: %s", e)
+            return {}
 
-    def closeEvent(self, event) -> None:  # noqa: ARG002
-        # Hide instead of closing. App keeps running.
-        self.hide()
+    def request_test_dictation(self) -> None:
+        self.testDictationRequested.emit()
 
-    def update_config(self, cfg: dict) -> None:
-        self._cfg = deepcopy(cfg)
-        self._load_values_into_ui()
+    def show_test_result(self, text: str) -> None:
+        overview = self._pages.get("overview")
+        if overview is not None:
+            overview.set_test_result(text)
 
-    # --- Update actions ---
+    def persist_config_now(self) -> None:
+        """Persist self._cfg immediately (Dictionary page edits) and notify the app."""
+        cfg_mod.save_config(self._cfg)
+        self.configChanged.emit(deepcopy(self._cfg))
 
-    def _open_update_dialog(self) -> None:
-        repo = self.update_repo_edit.text().strip() or DEFAULT_CONFIG["update_repo"]
+    def shutdown_workers(self) -> None:
+        """Stop page-owned background threads and the mic meter. Called by the
+        app on shutdown so no QThread is destroyed while running."""
+        for page in self._pages.values():
+            stop = getattr(page, "shutdown", None)
+            if stop is not None:
+                try:
+                    stop()
+                except Exception:
+                    pass
+        self.mic_source.stop()
+
+    def open_update_dialog(self, repo: str) -> None:
         dlg = UpdateDialog(repo=repo, parent=self)
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
         self._update_dialog = dlg  # keep a reference
 
-    def _install_from_file(self) -> None:
-        from . import updater
-
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select JasperVoice installer", "",
-            "Installer (*.exe);;All files (*)",
-        )
-        if not path:
-            return
-        try:
-            installer = updater.stage_local_installer(path)
-        except updater.UpdateError as e:
-            QMessageBox.warning(self, "JasperVoice", f"Cannot use that file:\n{e}")
-            return
-        confirm = QMessageBox.question(
-            self, "JasperVoice",
-            f"Run this installer now?\n\n{installer.name}\n\n"
-            "JasperVoice will close while it updates, then relaunch.",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if confirm != QMessageBox.Yes:
-            return
-        try:
-            updater.launch_installer(installer, silent=False)
-        except updater.UpdateError as e:
-            QMessageBox.warning(self, "JasperVoice", f"Could not launch installer:\n{e}")
-            return
-        # Quit so the installer can replace locked files.
-        from PySide6.QtWidgets import QApplication
-        QApplication.quit()
-
-
-class StatsWindow(QMainWindow):
-    """Usage statistics: total words, average WPM, total audio time, history."""
-
-    def __init__(self, history, parent: Optional[QObject] = None):
-        super().__init__(parent)
-        self._history = history
-        self.setWindowTitle("JasperVoice — Statistics")
-        self.setMinimumSize(560, 420)
-        self.resize(600, 480)
-        self._build_ui()
+    # --- Construction ---
 
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(16)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # --- Summary card ---
-        frame, box = _card("Summary")
-        self._total_label = QLabel("0 transcriptions")
-        self._total_label.setProperty("role", "fieldlabel")
-        box.addWidget(self._total_label)
-        self._words_label = QLabel("0 words")
-        self._words_label.setProperty("role", "fieldlabel")
-        box.addWidget(self._words_label)
-        self._duration_label = QLabel("0.0s total audio")
-        self._duration_label.setProperty("role", "fieldlabel")
-        box.addWidget(self._duration_label)
-        self._wpm_label = QLabel("0.0 avg WPM")
-        self._wpm_label.setProperty("role", "fieldlabel")
-        box.addWidget(self._wpm_label)
-        root.addWidget(frame)
+        root.addWidget(self._build_sidebar(), 0)
 
-        # --- History card ---
-        hist_frame, hist_box = _card("Recent Transcriptions")
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["Time", "Words", "Mode", "Text"])
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setAlternatingRowColors(True)
-        hist_box.addWidget(self._table)
+        right = QVBoxLayout()
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(0)
 
-        clear_btn = QPushButton("Clear history")
-        clear_btn.setMaximumWidth(140)
-        clear_btn.clicked.connect(self._clear_history)
-        hist_box.addWidget(clear_btn)
+        self._stack = QStackedWidget()
+        for cls in PAGE_CLASSES:
+            page = cls(self)
+            self._pages[page.page_id] = page
+            self._stack.addWidget(self._wrap_page(page))
+        right.addWidget(self._stack, 1)
+        right.addWidget(self._build_status_bar(), 0)
+        root.addLayout(right, 1)
 
-        root.addWidget(hist_frame, 1)
+        # Convenience aliases so app code/tests can reach common controls.
+        general = self._pages["general"]
+        self.hotkey_edit = general.hotkey_edit
+        self.lang_combo = general.lang_combo
+        self.mode_seg = general.mode_seg
+        self.paste_delay = general.paste_delay
+        self.min_duration = general.min_duration
+        updates = self._pages["updates"]
+        self.update_check_enabled = updates.update_check_enabled
+        self.update_repo_edit = updates.update_repo_edit
 
-    def refresh(self) -> None:
-        entries = self._history.entries()
-        total_words = self._history.total_words
-        total_dur = self._history.total_duration_s
-        count = self._history.count
-        avg_wpm = (total_words / (total_dur / 60.0)) if total_dur > 0 else 0.0
+        # Toast overlay
+        self._toast_label = QLabel("", central)
+        self._toast_label.setProperty("role", "toast")
+        self._toast_label.hide()
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.setInterval(2200)
+        self._toast_timer.timeout.connect(self._toast_label.hide)
 
-        self._total_label.setText(f"{count} transcriptions")
-        self._words_label.setText(f"{total_words} words")
-        self._duration_label.setText(f"{total_dur:.1f}s total audio")
-        self._wpm_label.setText(f"{avg_wpm:.1f} avg WPM")
+    def _build_sidebar(self) -> QWidget:
+        side = QWidget()
+        side.setObjectName("sideBar")
+        side.setFixedWidth(244)
+        box = QVBoxLayout(side)
+        box.setContentsMargins(0, 20, 0, 16)
+        box.setSpacing(0)
 
-        recent = list(reversed(entries[-50:]))
-        self._table.setRowCount(len(recent))
-        for i, e in enumerate(recent):
-            ts = e.timestamp[11:16] if len(e.timestamp) >= 16 else e.timestamp
-            self._table.setItem(i, 0, QTableWidgetItem(ts))
-            self._table.setItem(i, 1, QTableWidgetItem(str(e.word_count)))
-            self._table.setItem(i, 2, QTableWidgetItem(e.mode))
-            self._table.setItem(i, 3, QTableWidgetItem(e.text[:120]))
+        brand = QVBoxLayout()
+        brand.setContentsMargins(16, 0, 16, 14)
+        brand.setSpacing(3)
+        name = QLabel("JASPERVOICE")
+        name.setProperty("role", "brandname")
+        brand.addWidget(name)
+        sub = QLabel(f"Offline dictation · v{__version__}")
+        sub.setProperty("role", "brandsub")
+        brand.addWidget(sub)
+        box.addLayout(brand)
 
-    def _clear_history(self) -> None:
-        self._history.clear()
-        self.refresh()
+        search_wrap = QHBoxLayout()
+        search_wrap.setContentsMargins(14, 0, 14, 6)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search settings…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setAccessibleName("Search settings")
+        self.search_edit.textChanged.connect(self._apply_search)
+        self.search_edit.returnPressed.connect(self._go_to_first_match)
+        search_wrap.addWidget(self.search_edit)
+        box.addLayout(search_wrap)
 
-    def closeEvent(self, event) -> None:  # noqa: ARG002
+        for group_title, page_ids in NAV_GROUPS:
+            lbl = QLabel(group_title)
+            lbl.setProperty("role", "navgroup")
+            box.addWidget(lbl)
+            self._nav_group_labels.append((lbl, page_ids))
+            for pid in page_ids:
+                cls = next(c for c in PAGE_CLASSES if c.page_id == pid)
+                # QPushButton treats "&" as a mnemonic marker; escape it.
+                btn = QPushButton(cls.title.replace("&", "&&"))
+                btn.setProperty("nav", True)
+                glyph = NAV_GLYPHS.get(pid)
+                if glyph:
+                    btn.setIcon(glyph_icon(glyph))
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda _=False, p=pid: self.show_page(p))
+                box.addWidget(btn)
+                self._nav_buttons[pid] = btn
+
+        box.addStretch(1)
+
+        status = QVBoxLayout()
+        status.setContentsMargins(16, 10, 16, 0)
+        status.setSpacing(4)
+        lamp_row = QHBoxLayout()
+        lamp_row.setSpacing(6)
+        self._side_lamp = QLabel("")
+        self._side_lamp.setProperty("role", "statelamp")
+        lamp_row.addWidget(self._side_lamp, 0)
+        self._side_state = QLabel("READY")
+        lamp_row.addWidget(self._side_state, 1)
+        status.addLayout(lamp_row)
+        self._side_summary = QLabel("")
+        self._side_summary.setProperty("role", "brandsub")
+        self._side_summary.setWordWrap(True)
+        status.addWidget(self._side_summary)
+        box.addLayout(status)
+        return side
+
+    @staticmethod
+    def _wrap_page(page: BasePage) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        # Center the content column in the viewport; cap its width so wide
+        # windows get balanced whitespace on both sides instead of a page
+        # glued to the top-left corner.
+        page.setMaximumWidth(980)
+        row.addStretch(1)
+        row.addWidget(page, 24)
+        row.addStretch(1)
+        scroll.setWidget(holder)
+        return scroll
+
+    def _build_status_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setObjectName("statusBar")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(20, 10, 20, 10)
+        row.setSpacing(10)
+
+        self._bar_lamp = QLabel("")
+        self._bar_lamp.setProperty("role", "statelamp")
+        row.addWidget(self._bar_lamp, 0)
+        self._bar_state = QLabel("READY")
+        row.addWidget(self._bar_state, 0)
+        row.addWidget(QLabel("·"), 0)
+        self._bar_summary = QLabel("")
+        row.addWidget(self._bar_summary, 0)
+        self._bar_last_take = QLabel("")
+        row.addWidget(self._bar_last_take, 0)
+        row.addStretch(1)
+
+        self.dirty_hint = QLabel("All changes saved")
+        row.addWidget(self.dirty_hint, 0)
+        self.discard_btn = QPushButton("Discard")
+        self.discard_btn.setEnabled(False)
+        self.discard_btn.clicked.connect(self._on_discard)
+        row.addWidget(self.discard_btn, 0)
+        self.apply_btn = QPushButton("Apply")
+        self.apply_btn.setProperty("primary", True)
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.setDefault(True)
+        self.apply_btn.clicked.connect(self._on_apply)
+        row.addWidget(self.apply_btn, 0)
+        return bar
+
+    # --- Navigation + search ---
+
+    def show_page(self, page_id: str) -> None:
+        if page_id not in self._pages:
+            log.warning("Unknown page %r", page_id)
+            return
+        self._current_page_id = page_id
+        index = list(self._pages.keys()).index(page_id)
+        self._stack.setCurrentIndex(index)
+        for pid, btn in self._nav_buttons.items():
+            active = pid == page_id
+            btn.setProperty("navActive", active)
+            glyph = NAV_GLYPHS.get(pid)
+            if glyph:
+                btn.setIcon(glyph_icon(glyph, COLORS["accent"] if active else None))
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        self._pages[page_id].on_shown()
+        self._update_mic_state()
+
+    def current_page_id(self) -> str:
+        return self._current_page_id
+
+    def _apply_search(self, text: str) -> None:
+        query = text.strip().lower()
+        for pid, btn in self._nav_buttons.items():
+            page = self._pages[pid]
+            visible = not query or any(query in term.lower() for term in page.search_terms())
+            btn.setVisible(visible)
+        # isHidden() reflects the explicit setVisible flag even while the
+        # window itself is not shown (isVisible() would be False for all).
+        for lbl, page_ids in self._nav_group_labels:
+            lbl.setVisible(any(not self._nav_buttons[p].isHidden() for p in page_ids))
+
+    def _go_to_first_match(self) -> None:
+        for _group, page_ids in NAV_GROUPS:
+            for pid in page_ids:
+                if not self._nav_buttons[pid].isHidden():
+                    self.show_page(pid)
+                    return
+
+    # --- Load / collect / dirty state ---
+
+    def mark_dirty(self) -> None:
+        if self._loading or self._dirty:
+            return
+        self._dirty = True
+        self.apply_btn.setEnabled(True)
+        self.discard_btn.setEnabled(True)
+        self.dirty_hint.setText("Unsaved changes")
+        self.dirty_hint.setProperty("role", "dirtyhint")
+        self._repolish(self.dirty_hint)
+
+    def _clear_dirty(self, message: str) -> None:
+        self._dirty = False
+        self.apply_btn.setEnabled(False)
+        self.discard_btn.setEnabled(False)
+        self.dirty_hint.setText(message)
+        self.dirty_hint.setProperty("role", "")
+        self._repolish(self.dirty_hint)
+
+    @staticmethod
+    def _repolish(widget: QWidget) -> None:
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+
+    def _load_values_into_ui(self) -> None:
+        self._loading = True
+        try:
+            for page in self._pages.values():
+                page.load_from(self._cfg)
+        finally:
+            self._loading = False
+        self._clear_dirty("All changes saved")
+        self._refresh_summary()
+
+    def _collect_values(self) -> dict:
+        out = deepcopy(self._cfg)
+        for pid in SETTINGS_PAGE_IDS:
+            self._pages[pid].collect_into(out)
+        return out
+
+    def _on_apply(self) -> None:
+        new_cfg = self._collect_values()
+        self._cfg = new_cfg
+        cfg_mod.save_config(new_cfg)
+        self.configChanged.emit(deepcopy(new_cfg))
+        self._clear_dirty("All changes saved")
+        self._refresh_summary()
+        # Saved values changed: refresh the read-only views that show them.
+        for pid in ("overview", "model"):
+            self._pages[pid].on_shown()
+        self.toast("Settings applied")
+
+    def _on_discard(self) -> None:
+        self._load_values_into_ui()
+        self.toast("Changes discarded")
+
+    # Backwards-compatible name (the previous window called this Cancel).
+    def _on_cancel(self) -> None:
+        self._on_discard()
+
+    def update_config(self, cfg: dict) -> None:
+        """Replace the saved config (e.g. tray language change) without marking dirty."""
+        self._cfg = deepcopy(cfg)
+        self._load_values_into_ui()
+
+    # --- Status areas ---
+
+    def set_app_state(self, state: str) -> None:
+        label, color = WINDOW_STATES.get(state, WINDOW_STATES["idle"])
+        for lamp in (self._side_lamp, self._bar_lamp):
+            lamp.setStyleSheet(f"background-color: {color}; border-radius: 5px;")
+        self._side_state.setText(label)
+        self._bar_state.setText(label)
+        self._refresh_summary()
+
+    def _refresh_summary(self) -> None:
+        summary = (
+            f"whisper {self._cfg.get('model_size', '?')} · "
+            f"{self._cfg.get('device', '?')} · {self._cfg.get('compute_type', '?')}"
+        )
+        self._side_summary.setText(summary)
+        self._bar_summary.setText(summary)
+        info = self.runtime_info()
+        last = info.get("last_duration_s")
+        self._bar_last_take.setText(f"· last take {last:.1f}s" if last else "")
+
+    # --- Toast ---
+
+    def toast(self, message: str) -> None:
+        self._toast_label.setText(message)
+        self._toast_label.adjustSize()
+        central = self.centralWidget()
+        if central is not None:
+            x = (central.width() - self._toast_label.width()) // 2
+            y = central.height() - self._toast_label.height() - 52
+            self._toast_label.move(max(0, x), max(0, y))
+        self._toast_label.show()
+        self._toast_label.raise_()
+        self._toast_timer.start()
+
+    # --- Mic meter lifecycle ---
+
+    def set_meter_paused(self, paused: bool) -> None:
+        self._meter_paused = paused
+        for pid in ("overview", "audio"):
+            page = self._pages.get(pid)
+            if page is not None:
+                page.sync_meter_button(paused)
+        self._update_mic_state()
+
+    def restart_mic_meter(self) -> None:
+        self.mic_source.stop()
+        self._update_mic_state()
+
+    def _update_mic_state(self) -> None:
+        # The meter opens a real input stream; never auto-start it headless
+        # (offscreen platform = tests/CI), only on explicit user resume.
+        want = (
+            self.isVisible()
+            and not self._meter_paused
+            and self._current_page_id in ("overview", "audio")
+            and QApplication.platformName() != "offscreen"
+        )
+        if want and not self.mic_source.is_running:
+            audio_page = self._pages.get("audio")
+            device = audio_page.current_device() if audio_page is not None else "default"
+            self.mic_source.start(device)
+        elif not want and self.mic_source.is_running:
+            self.mic_source.stop()
+
+    # --- Window lifecycle ---
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._pages[self._current_page_id].on_shown()
+        self._update_mic_state()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        super().hideEvent(event)
+        self._update_mic_state()
+
+    def closeEvent(self, event) -> None:  # noqa: ARG002, N802
+        # Hide instead of closing. App keeps running in the tray.
         self.hide()
 
 
 # --- Update dialog + background workers ---
+
+def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
+    """Titled panel container used by the update dialog."""
+    frame = QFrame()
+    frame.setProperty("role", "panel")
+    box = QVBoxLayout(frame)
+    box.setContentsMargins(18, 14, 18, 16)
+    box.setSpacing(10)
+    header = QLabel(title)
+    header.setProperty("role", "grouptitle")
+    box.addWidget(header)
+    return frame, box
+
 
 class _CheckWorker(QObject):
     """Runs updater.check_for_update off the UI thread."""
@@ -865,7 +625,7 @@ class UpdateDialog(QMainWindow):
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(14)
 
-        frame, box = _card("Software Update")
+        frame, box = _card("SOFTWARE UPDATE")
         self._status = QLabel("Checking for updates…")
         self._status.setWordWrap(True)
         self._status.setProperty("role", "fieldlabel")
@@ -996,7 +756,6 @@ class UpdateDialog(QMainWindow):
 
     def _launch_install(self) -> None:
         from . import updater
-        from PySide6.QtWidgets import QApplication
 
         try:
             updater.launch_installer(self._installer_path, silent=False)
@@ -1014,6 +773,6 @@ class UpdateDialog(QMainWindow):
             self._thread = None
         self._worker = None
 
-    def closeEvent(self, event) -> None:  # noqa: ARG002
+    def closeEvent(self, event) -> None:  # noqa: ARG002, N802
         self._teardown_thread()
         super().closeEvent(event)

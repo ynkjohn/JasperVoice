@@ -156,17 +156,22 @@ QWidget#footerBand {{
 QPushButton {{
     background-color: {COLORS['bg_alt']};
     color: {COLORS['fg']};
-    border: 1px solid {COLORS['border']};
-    padding: 6px 14px;
+    border: 1px solid {COLORS['border_strong']};
+    border-radius: 6px;
+    padding: 8px 18px;
     font-family: {FONTS['sans']};
     font-size: 13px;
 }}
 QPushButton:hover {{
     border-color: {COLORS['accent']};
     color: {COLORS['accent']};
+    background-color: {COLORS['bg_hover']};
 }}
 QPushButton:pressed {{
     background-color: {COLORS['bg_hover']};
+}}
+QPushButton:focus {{
+    border-color: {COLORS['accent']};
 }}
 QPushButton:disabled {{
     color: {COLORS['fg_disabled']};
@@ -192,12 +197,18 @@ QPushButton[primary="true"]:disabled {{
 QLineEdit, QComboBox, QSpinBox, QKeySequenceEdit {{
     background-color: {COLORS['bg_alt']};
     color: {COLORS['fg']};
-    border: 1px solid {COLORS['border']};
-    padding: 4px 8px;
+    border: 1px solid {COLORS['border_strong']};
+    border-radius: 6px;
+    padding: 7px 12px;
+    min-height: 18px;
     font-family: {FONTS['mono']};
     font-size: 13px;
     selection-background-color: {COLORS['accent']};
     selection-color: {COLORS['bg']};
+}}
+QSpinBox {{
+    min-width: 96px;
+    padding-right: 26px;
 }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QKeySequenceEdit:focus {{
     border-color: {COLORS['accent']};
@@ -330,7 +341,7 @@ QComboBox::down-arrow {{
 }}
 
 QSpinBox::up-button, QSpinBox::down-button {{
-    width: 16px;
+    width: 20px;
     background-color: {COLORS['bg_hover']};
     border-left: 1px solid {COLORS['border']};
 }}
@@ -356,26 +367,261 @@ QSpinBox::down-arrow {{
 
 QTableWidget {{
     background-color: {COLORS['bg_alt']};
+    alternate-background-color: #161616;
     color: {COLORS['fg']};
     border: 1px solid {COLORS['border']};
-    gridline-color: {COLORS['border']};
+    border-radius: 8px;
+    gridline-color: transparent;
     font-family: {FONTS['mono']};
     font-size: 12px;
 }}
 QTableWidget::item {{
-    padding: 4px;
+    padding: 6px 10px;
+    border-bottom: 1px solid #1E1E1E;
 }}
 QTableWidget::item:selected {{
-    background-color: {COLORS['accent']};
-    color: {COLORS['bg']};
+    background-color: rgba(217, 119, 87, 0.22);
+    color: {COLORS['fg']};
 }}
 QHeaderView::section {{
-    background-color: {COLORS['bg']};
+    background-color: {COLORS['bg_alt']};
     color: {COLORS['fg_muted']};
-    border: 1px solid {COLORS['border']};
-    padding: 4px 8px;
+    border: none;
+    border-bottom: 1px solid {COLORS['border_strong']};
+    padding: 9px 12px;
+    font-family: {FONTS['mono']};
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}}
+
+/* ===== Navigable settings shell ===== */
+
+QWidget#sideBar {{
+    background-color: #0A0A0A;
+    border-right: 1px solid {COLORS['border']};
+}}
+QWidget#sideBar QLabel, QWidget#sideBar QWidget {{
+    background: transparent;
+}}
+
+QLabel[role="brandname"] {{
+    font-family: {FONTS['mono']};
+    font-size: 14px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: {COLORS['fg']};
+}}
+QLabel[role="brandsub"] {{
+    font-size: 11px;
+    color: {COLORS['fg_muted']};
+}}
+
+QLabel[role="navgroup"] {{
+    font-family: {FONTS['mono']};
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1.5px;
+    color: {COLORS['fg_disabled']};
+    padding: 10px 12px 4px 12px;
+}}
+
+QPushButton[nav="true"] {{
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+    border-left: 2px solid transparent;
+    color: {COLORS['fg_muted']};
+    text-align: left;
+    padding: 9px 14px;
+    font-size: 13px;
+}}
+QPushButton[nav="true"]:hover {{
+    color: {COLORS['fg']};
+    background-color: {COLORS['bg_alt']};
+}}
+QPushButton[nav="true"]:focus {{
+    color: {COLORS['fg']};
+    border-left: 2px solid {COLORS['border_strong']};
+}}
+QPushButton[nav="true"][navActive="true"] {{
+    color: {COLORS['fg']};
+    background-color: rgba(217, 119, 87, 0.10);
+    border-left: 2px solid {COLORS['accent']};
+}}
+
+QLabel[role="pagetitle"] {{
+    font-family: {FONTS['mono']};
+    font-size: 21px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: {COLORS['fg']};
+    background: transparent;
+}}
+QLabel[role="pagedesc"] {{
+    color: {COLORS['fg_muted']};
+    font-size: 13px;
+    background: transparent;
+}}
+QLabel[role="grouptitle"] {{
     font-family: {FONTS['mono']};
     font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: {COLORS['accent']};
+    background: transparent;
+    padding: 20px 0px 8px 0px;
+}}
+QLabel[role="panelheader"] {{
+    font-family: {FONTS['mono']};
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: {COLORS['accent']};
+    background: transparent;
+    padding: 0px;
+}}
+QFrame[role="hairline"] {{
+    background-color: {COLORS['border']};
+    border: none;
+}}
+
+QFrame[role="panel"] {{
+    background-color: {COLORS['bg_alt']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+}}
+QFrame[role="panel"] QLabel {{
+    background: transparent;
+}}
+
+QFrame[role="stattile"] {{
+    background-color: {COLORS['bg_alt']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+}}
+QFrame[role="stattile"] QLabel {{
+    background: transparent;
+}}
+QLabel[role="statvalue"] {{
+    font-family: {FONTS['mono']};
+    font-size: 27px;
+    font-weight: bold;
+    color: {COLORS['fg']};
+}}
+QLabel[role="statcaption"] {{
+    font-family: {FONTS['mono']};
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: {COLORS['fg_muted']};
+}}
+
+QPushButton[seg="true"] {{
+    background-color: {COLORS['bg_alt']};
+    color: {COLORS['fg_muted']};
+    border: 1px solid {COLORS['border_strong']};
+    border-left: none;
+    border-radius: 0px;
+    padding: 8px 16px;
+    font-size: 12px;
+}}
+QPushButton[seg="true"][segfirst="true"] {{
+    border-left: 1px solid {COLORS['border_strong']};
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+}}
+QPushButton[seg="true"][seglast="true"] {{
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}}
+QPushButton[seg="true"]:hover {{
+    color: {COLORS['fg']};
+    background-color: {COLORS['bg_hover']};
+}}
+QPushButton[seg="true"]:checked {{
+    background-color: {COLORS['accent']};
+    color: {COLORS['bg']};
+    border-color: {COLORS['accent']};
+}}
+
+QPushButton[compact="true"] {{
+    padding: 4px 12px;
+    font-size: 11px;
+    border-radius: 5px;
+}}
+
+QPushButton[modelcard="true"] {{
+    background-color: {COLORS['bg_alt']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+    padding: 0px;
+    text-align: left;
+    min-height: 124px;
+}}
+QPushButton[modelcard="true"]:hover {{
+    border-color: {COLORS['border_strong']};
+    background-color: {COLORS['bg_hover']};
+}}
+QPushButton[modelcard="true"]:checked {{
+    border: 1px solid {COLORS['accent']};
+    background-color: rgba(217, 119, 87, 0.08);
+}}
+QLabel[role="cardname"] {{
+    font-family: {FONTS['mono']};
+    font-size: 14px;
+    font-weight: bold;
+    color: {COLORS['fg']};
+    background: transparent;
+}}
+QLabel[role="cardstate"] {{
+    font-family: {FONTS['mono']};
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: {COLORS['fg_muted']};
+    background: transparent;
+}}
+QLabel[role="cardstate"][emph="true"] {{
+    color: {COLORS['accent']};
+}}
+
+QWidget#statusBar {{
+    background-color: #0A0A0A;
+    border-top: 1px solid {COLORS['border']};
+}}
+QWidget#statusBar QLabel {{
+    background: transparent;
+    font-family: {FONTS['mono']};
+    font-size: 11px;
+    color: {COLORS['fg_muted']};
+}}
+QLabel[role="statelamp"] {{
+    border-radius: 5px;
+    min-width: 10px;
+    max-width: 10px;
+    min-height: 10px;
+    max-height: 10px;
+}}
+QLabel[role="dirtyhint"] {{
+    color: {COLORS['accent']};
+}}
+
+QLabel[role="toast"] {{
+    background-color: {COLORS['bg_hover']};
+    color: {COLORS['fg']};
+    border: 1px solid {COLORS['accent']};
+    padding: 8px 16px;
+    font-size: 12px;
+}}
+
+QPlainTextEdit[role="logbox"] {{
+    background-color: #0A0A0A;
+    color: {COLORS['fg_muted']};
+    border: 1px solid {COLORS['border']};
+    font-family: {FONTS['mono']};
+    font-size: 11px;
+    selection-background-color: {COLORS['accent']};
+    selection-color: {COLORS['bg']};
 }}
 """
 

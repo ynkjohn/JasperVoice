@@ -354,3 +354,112 @@ def test_hotkey_mode_invalid_falls_back(tmp_path, monkeypatch):
     p.write_text(json.dumps({"hotkey_mode": "voice"}), encoding="utf-8")
     cfg = load_config()
     assert cfg["hotkey_mode"] == "push_to_talk"
+
+
+# --- New shell/UI keys ---
+
+def test_new_ui_keys_have_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    cfg = load_config()
+    assert cfg["launch_at_login"] is False
+    assert cfg["start_minimized"] is True
+    assert cfg["show_overlay"] is True
+    assert cfg["overlay_position"] == "bottom_right"
+    assert cfg["input_device"] == "default"
+    assert cfg["noise_gate_enabled"] is False
+    assert cfg["sound_feedback"] == "off"
+    assert cfg["warmup_on_launch"] is True
+
+
+def test_new_ui_keys_persist(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    save_config({
+        "launch_at_login": True,
+        "start_minimized": False,
+        "show_overlay": False,
+        "overlay_position": "top_left",
+        "input_device": "Yeti X Microphone",
+        "noise_gate_enabled": True,
+        "sound_feedback": "subtle",
+        "warmup_on_launch": False,
+    })
+    cfg = load_config()
+    assert cfg["launch_at_login"] is True
+    assert cfg["start_minimized"] is False
+    assert cfg["show_overlay"] is False
+    assert cfg["overlay_position"] == "top_left"
+    assert cfg["input_device"] == "Yeti X Microphone"
+    assert cfg["noise_gate_enabled"] is True
+    assert cfg["sound_feedback"] == "subtle"
+    assert cfg["warmup_on_launch"] is False
+
+
+def test_new_ui_keys_invalid_fall_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = get_config_path()
+    p.write_text(json.dumps({
+        "launch_at_login": "yes",
+        "start_minimized": 1,
+        "show_overlay": "on",
+        "overlay_position": "center",
+        "input_device": 5,
+        "noise_gate_enabled": "loud",
+        "sound_feedback": "blaring",
+        "warmup_on_launch": "always",
+    }), encoding="utf-8")
+    cfg = load_config()
+    assert cfg["launch_at_login"] is False
+    assert cfg["start_minimized"] is True
+    assert cfg["show_overlay"] is True
+    assert cfg["overlay_position"] == "bottom_right"
+    assert cfg["input_device"] == "default"
+    assert cfg["noise_gate_enabled"] is False
+    assert cfg["sound_feedback"] == "off"
+    assert cfg["warmup_on_launch"] is True
+
+
+def test_input_device_blank_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = get_config_path()
+    p.write_text(json.dumps({"input_device": "   "}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg["input_device"] == "default"
+
+
+# --- Dictionary "enabled" coercion ---
+
+def test_dictionary_enabled_true_is_omitted(tmp_path, monkeypatch):
+    """enabled=True entries keep the old two-key shape for backward compat."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = get_config_path()
+    p.write_text(json.dumps({
+        "dictionary": [{"phrase": "foo", "replacement": "Bar", "enabled": True}]
+    }), encoding="utf-8")
+    cfg = load_config()
+    assert cfg["dictionary"] == [{"phrase": "foo", "replacement": "Bar"}]
+
+
+def test_dictionary_enabled_false_is_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = get_config_path()
+    p.write_text(json.dumps({
+        "dictionary": [
+            {"phrase": "foo", "replacement": "Bar", "enabled": False},
+            {"phrase": "baz", "replacement": "Qux"},
+        ]
+    }), encoding="utf-8")
+    cfg = load_config()
+    assert cfg["dictionary"] == [
+        {"phrase": "foo", "replacement": "Bar", "enabled": False},
+        {"phrase": "baz", "replacement": "Qux"},
+    ]
+
+
+def test_dictionary_enabled_falsy_value_disables(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = get_config_path()
+    p.write_text(json.dumps({
+        "dictionary": [{"phrase": "foo", "replacement": "Bar", "enabled": 0}]
+    }), encoding="utf-8")
+    cfg = load_config()
+    assert cfg["dictionary"] == [{"phrase": "foo", "replacement": "Bar", "enabled": False}]

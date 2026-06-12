@@ -214,3 +214,24 @@ def test_recording_resets_stale_levels(qapp):
     o.set_state("idle")
     o.set_state("recording")
     assert o._levels == [0.0] * NUM_BANDS
+
+
+def test_set_position_moves_between_corners(qapp):
+    """set_position re-anchors the pill; each corner yields a distinct spot."""
+    o = RecordingOverlay()
+    positions = {}
+    for corner in ("top_left", "top_right", "bottom_left", "bottom_right"):
+        o.set_position(corner)
+        positions[corner] = (o.x(), o.y())
+    assert positions["top_left"][0] < positions["top_right"][0]
+    assert positions["top_left"][1] < positions["bottom_left"][1]
+    assert len(set(positions.values())) == 4
+
+
+def test_set_position_invalid_corner_keeps_current(qapp):
+    o = RecordingOverlay()
+    o.set_position("bottom_left")
+    before = (o.x(), o.y())
+    o.set_position("middle")
+    assert (o.x(), o.y()) == before
+    assert o._corner == "bottom_left"

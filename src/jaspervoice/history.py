@@ -113,6 +113,30 @@ class TranscriptionHistory:
         with self._lock:
             return list(self._entries)
 
+    def remove_at(self, index: int) -> bool:
+        """Remove the entry at `index` (as positioned in entries()) and persist.
+
+        Returns True if an entry was removed, False for an out-of-range index.
+        """
+        with self._lock:
+            if not (0 <= index < len(self._entries)):
+                return False
+            del self._entries[index]
+            self._save()
+            return True
+
+    def export_to(self, path) -> int:
+        """Write all entries as JSON to `path`. Returns the entry count."""
+        from pathlib import Path
+
+        with self._lock:
+            data = [e.to_dict() for e in self._entries]
+        p = Path(path)
+        with p.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        return len(data)
+
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()

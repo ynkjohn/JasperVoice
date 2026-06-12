@@ -738,3 +738,131 @@ def test_worker_signal_handlers_run_on_main_thread(qt_app, tmp_path, monkeypatch
     assert len(handler_threads) >= 1
     for ht in handler_threads:
         assert ht is main_thread, f"Handler ran on {ht}, expected main thread {main_thread}"
+
+
+def test_test_dictation_routes_result_without_injection(qt_app, tmp_path, monkeypatch):
+    """The settings window's Test dictation runs the real pipeline but never
+    injects: the transcribed text comes back via show_test_result."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+    })
+    injected = []
+    monkeypatch.setattr(
+        "jaspervoice.app.injection.inject_text",
+        lambda t, settle_ms=30: injected.append(t) or True,
+    )
+    from jaspervoice.transcription import TranscriptionResult
+    monkeypatch.setattr(
+        "jaspervoice.app.Transcriber.transcribe",
+        lambda self, audio, sample_rate=16000: TranscriptionResult(
+            text="test take", language="pt", duration=0.5
+        ),
+    )
+
+    a = App()
+    a.setup()
+    try:
+        fake_audio = (np.random.default_rng(1).normal(0, 0.01, 8000)).astype(np.float32)
+        monkeypatch.setattr(a._recorder, "start", lambda: None)
+        monkeypatch.setattr(a._recorder, "stop", lambda: fake_audio)
+
+        a._settings.testDictationRequested.emit()
+        assert a._test_pending is True
+        assert a._busy is True
+        # Don't wait for the 4s timer; finish the take directly.
+        a._finish_test_dictation()
+
+        deadline = time.monotonic() + 20.0
+        while a._busy and time.monotonic() < deadline:
+            qt_app.processEvents(QEventLoop.AllEvents, 100)
+
+        assert a._busy is False
+        assert a._test_pending is False
+        assert injected == []  # never pasted anywhere
+        status = a._settings.page("overview").test_status.text()
+        assert "test take" in status
+    finally:
+        a._shutdown()
+
+
+def test_hotkey_release_ignored_during_test_take(qt_app, tmp_path, monkeypatch):
+    """A hotkey release while a test take is recording must not hijack it."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+    })
+    a = App()
+    a.setup()
+    try:
+        monkeypatch.setattr(a._recorder, "start", lambda: None)
+        stopped = []
+        monkeypatch.setattr(a._recorder, "stop", lambda: stopped.append(True))
+        a._on_test_dictation()
+        assert a._test_pending is True
+        a._on_release()
+        a._on_cancel()
+        assert stopped == []  # neither path touched the recorder
+        assert a._test_pending is True
+    finally:
+        a._shutdown()
+
+
+def test_stats_request_opens_history_page(qt_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+    })
+    a = App()
+    a.setup()
+    try:
+        a._tray.stats_requested.emit()
+        assert a._settings.current_page_id() == "history"
+        assert a._settings.isVisible()
+    finally:
+        a._shutdown()
+
+
+def test_show_overlay_disabled_hides_overlay(qt_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+    })
+    a = App()
+    a.setup()
+    try:
+        new_cfg = dict(a._cfg)
+        new_cfg["show_overlay"] = False
+        a._on_config_changed(new_cfg)
+        # State changes no longer reach the overlay
+        a._set_state("recording")
+        assert not a._overlay.isVisible()
+        # Re-enable: states flow again
+        new_cfg = dict(new_cfg)
+        new_cfg["show_overlay"] = True
+        a._on_config_changed(new_cfg)
+        a._set_state("recording")
+        assert a._overlay.isVisible()
+        a._set_state("idle")
+    finally:
+        a._shutdown()

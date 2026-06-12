@@ -33,6 +33,9 @@ benchmark/
 
 # Local agent/chat transcripts
 session-*.md
+scratch_render.py
+scratch_shots/
 
 # Local agent instructions (not shipped with the project)
 AGENTS.md
+developer.md

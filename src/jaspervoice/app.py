@@ -25,6 +25,7 @@ from PySide6.QtWidgets import QApplication
 
 from . import config as cfg_mod
 from . import injection
+from . import sounds
 from .audio import Recorder, RecorderError
 from .dictionary import DeveloperDictionary
 from .history import TranscriptionHistory
@@ -56,9 +57,10 @@ class _LevelBridge(QObject):
 class TranscriptionWorker(QObject):
     """Runs the (transcribe + post-process + inject) pipeline off the Qt event loop."""
 
-    finished = Signal(str)  # injected text (or empty)
-    failed = Signal(str)    # error message
-    state = Signal(str)     # state for the tray
+    finished = Signal(str)     # injected text (or empty)
+    test_result = Signal(str)  # transcribed text for a test take (not injected)
+    failed = Signal(str)       # error message
+    state = Signal(str)        # state for the tray
 
     def __init__(
         self,
@@ -68,6 +70,7 @@ class TranscriptionWorker(QObject):
         output_mode: str = "raw",
         post_processing_enabled: bool = False,
         dictionary: Optional[DeveloperDictionary] = None,
+        warmup: bool = True,
     ):
         super().__init__()
         self._transcriber = transcriber
@@ -76,16 +79,20 @@ class TranscriptionWorker(QObject):
         self._output_mode = output_mode
         self._post_processing_enabled = post_processing_enabled
         self._dictionary: DeveloperDictionary = dictionary or DeveloperDictionary()
+        self._warmup = warmup
         self._pending: Optional[tuple] = None
         self._stop = False
         self._lock = threading.Lock()
         self._cv = threading.Condition(self._lock)
 
-    def submit(self, audio, sample_rate: int) -> None:
+    def submit(self, audio, sample_rate: int, inject: bool = True) -> None:
+        """Queue a take. `inject=False` runs the same pipeline but emits
+        `test_result` instead of pasting into the focused window (used by the
+        settings window's Test dictation button)."""
         with self._cv:
             if self._stop:
                 return
-            self._pending = (audio, sample_rate)
+            self._pending = (audio, sample_rate, inject)
             self._cv.notify_all()
 
     def stop(self) -> None:
@@ -107,7 +114,7 @@ class TranscriptionWorker(QObject):
         # so the first dictation doesn't pay the ~2-5s model-load cost.
         with self._cv:
             already_stopped = self._stop
-        if not already_stopped:
+        if not already_stopped and self._warmup:
             try:
                 self._transcriber._ensure_loaded()
                 log.info(
@@ -120,13 +127,13 @@ class TranscriptionWorker(QObject):
             pending = self._wait_for_task()
             if pending is None:
                 return
-            audio, sample_rate = pending
+            audio, sample_rate, inject = pending
             try:
                 self.state.emit("processing")
                 result = self._transcriber.transcribe(audio, sample_rate=sample_rate)
                 raw_text = result.text.strip()
                 if not raw_text:
-                    self.finished.emit("")
+                    (self.finished if inject else self.test_result).emit("")
                     continue
 
                 dict_text = raw_text
@@ -145,8 +152,11 @@ class TranscriptionWorker(QObject):
                     except Exception as e:
                         log.warning("Post-processing unexpected error: %s. Falling back to dictionary text.", e)
 
-                injection.inject_text(final_text, settle_ms=self._paste_delay_ms)
-                self.finished.emit(final_text)
+                if inject:
+                    injection.inject_text(final_text, settle_ms=self._paste_delay_ms)
+                    self.finished.emit(final_text)
+                else:
+                    self.test_result.emit(final_text)
             except (TranscriberError, RecorderError) as e:
                 log.exception("Pipeline error")
                 self.failed.emit(str(e))
@@ -165,6 +175,7 @@ class App(QObject):
         self._level_bridge = _LevelBridge()
         self._recorder = Recorder(
             sample_rate=int(self._cfg["sample_rate"]),
+            device=self._resolve_input_device(self._cfg),
             level_callback=lambda bands: self._level_bridge.levels.emit(bands),
         )
         self._transcriber = Transcriber(
@@ -187,7 +198,12 @@ class App(QObject):
         self._history = TranscriptionHistory()
         self._recording_start: Optional[float] = None
         self._last_duration_s: float = 0.0
-        self._stats_window = None
+        self._overlay_enabled = bool(self._cfg.get("show_overlay", True))
+        self._last_state = "idle"
+        # Test dictation (settings window "Test dictation" button): records a
+        # short take and runs the real pipeline with injection disabled.
+        self._test_pending = False
+        self._test_timer: Optional[QTimer] = None
         # Hold the single-instance mutex for the process lifetime. Acquired in
         # run(); kept as an attribute so the OS keeps the kernel object alive
         # until we exit.
@@ -196,12 +212,23 @@ class App(QObject):
         self._startup_check_thread: Optional[QThread] = None
         self._startup_check_worker: Optional[QObject] = None
 
+    @staticmethod
+    def _resolve_input_device(cfg: dict) -> Optional[str]:
+        device = str(cfg.get("input_device", "default"))
+        return None if device == "default" else device
+
     def _set_state(self, state: str) -> None:
-        """Mirror a state to both tray and overlay."""
+        """Mirror a state to tray, overlay (if enabled), and settings window,
+        and play the configured audible cue on state transitions."""
+        if state != self._last_state:
+            self._last_state = state
+            sounds.play_state_cue(state, str(self._cfg.get("sound_feedback", "off")))
         if self._tray is not None:
             self._tray.set_state(state)
-        if self._overlay is not None:
+        if self._overlay is not None and self._overlay_enabled:
             self._overlay.set_state(state)
+        if self._settings is not None:
+            self._settings.set_app_state(state)
 
     def _state_is(self, state: str) -> bool:
         """Check if current overlay state matches."""
@@ -247,7 +274,7 @@ class App(QObject):
             self._schedule_idle_after_error()
 
     def _on_release(self) -> None:
-        if not self._busy:
+        if not self._busy or self._test_pending:
             return
         try:
             audio = self._recorder.stop()
@@ -271,11 +298,73 @@ class App(QObject):
             self._worker.submit(audio, int(self._cfg["sample_rate"]))
 
     def _on_cancel(self) -> None:
+        if self._test_pending:
+            return
         if self._recorder.is_active:
             self._recorder.cancel()
         self._busy = False
         self._recording_start = None
         self._set_state("idle")
+
+    # ----- Test dictation (settings window) -----
+    def _on_test_dictation(self) -> None:
+        """Record ~4s and run the real pipeline without injecting the result."""
+        if self._busy:
+            if self._settings is not None:
+                self._settings.show_test_result("Pipeline busy — finish the current take first.")
+            return
+        try:
+            self._recorder.start()
+        except RecorderError as e:
+            if self._settings is not None:
+                self._settings.show_test_result(f"Microphone error: {e}")
+            return
+        self._busy = True
+        self._test_pending = True
+        self._set_state("recording")
+        if self._test_timer is not None:
+            self._test_timer.start(4000)
+
+    def _finish_test_dictation(self) -> None:
+        if not self._test_pending:
+            return
+        try:
+            audio = self._recorder.stop()
+        except Exception as e:
+            log.exception("Test recording stop failed")
+            self._busy = False
+            self._test_pending = False
+            self._set_state("idle")
+            if self._settings is not None:
+                self._settings.show_test_result(f"Recording failed: {e}")
+            return
+        if audio.size == 0:
+            self._busy = False
+            self._test_pending = False
+            self._set_state("idle")
+            if self._settings is not None:
+                self._settings.show_test_result("No audio captured — check the input device.")
+            return
+        if self._worker is not None:
+            self._worker.submit(audio, int(self._cfg["sample_rate"]), inject=False)
+
+    @Slot(str)
+    def _on_worker_test_result(self, text: str) -> None:
+        self._busy = False
+        self._test_pending = False
+        self._set_state("idle")
+        if self._settings is not None:
+            self._settings.show_test_result(text or "(no speech detected)")
+
+    def _runtime_info(self) -> dict:
+        """Live info for the settings window status areas (UI thread only)."""
+        info: dict = {}
+        if self._transcriber is not None:
+            info["resolved_device"] = self._transcriber.resolved_device
+            info["model_loaded"] = self._transcriber.is_loaded
+        if self._last_duration_s:
+            info["last_duration_s"] = self._last_duration_s
+        return info
 
     # ----- Worker signals -----
     @Slot(str)
@@ -301,6 +390,10 @@ class App(QObject):
     @Slot(str)
     def _on_worker_failed(self, msg: str) -> None:
         self._busy = False
+        if self._test_pending:
+            self._test_pending = False
+            if self._settings is not None:
+                self._settings.show_test_result(f"Error: {msg}")
         self._set_state("error")
         if self._tray:
             short = msg if len(msg) < 80 else msg[:77] + "…"
@@ -349,11 +442,14 @@ class App(QObject):
 
         # Settings window (constructed before overlay so overlay can connect
         # to it for the "Settings..." context menu).
-        self._settings = SettingsWindow(self._cfg)
+        self._settings = SettingsWindow(self._cfg, history=self._history)
         self._settings.configChanged.connect(self._on_config_changed)
+        self._settings.testDictationRequested.connect(self._on_test_dictation)
+        self._settings.set_runtime_provider(self._runtime_info)
 
         # Floating recording indicator.
         self._overlay = RecordingOverlay()
+        self._overlay.set_position(str(self._cfg.get("overlay_position", "bottom_right")))
         self._overlay.clicked.connect(self._show_settings)
         self._overlay.settings_requested.connect(self._show_settings)
         self._overlay.quit_requested.connect(self._shutdown)
@@ -370,6 +466,11 @@ class App(QObject):
         self._error_timer.setSingleShot(True)
         self._error_timer.timeout.connect(self._clear_error_state)
 
+        # Test-dictation stop timer (main thread, single shot).
+        self._test_timer = QTimer()
+        self._test_timer.setSingleShot(True)
+        self._test_timer.timeout.connect(self._finish_test_dictation)
+
         # Worker on its own QThread so the Qt loop stays responsive.
         self._worker_thread = QThread()
         self._worker = TranscriptionWorker(
@@ -379,10 +480,12 @@ class App(QObject):
             output_mode=self._cfg.get("output_mode", "raw"),
             post_processing_enabled=bool(self._cfg.get("post_processing_enabled", False)),
             dictionary=DeveloperDictionary(self._cfg.get("dictionary", [])),
+            warmup=bool(self._cfg.get("warmup_on_launch", True)),
         )
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_worker_finished, Qt.ConnectionType.QueuedConnection)
+        self._worker.test_result.connect(self._on_worker_test_result, Qt.ConnectionType.QueuedConnection)
         self._worker.failed.connect(self._on_worker_failed, Qt.ConnectionType.QueuedConnection)
         self._worker.state.connect(self._on_worker_state, Qt.ConnectionType.QueuedConnection)
         self._worker_thread.start()
@@ -455,13 +558,11 @@ class App(QObject):
         self._settings.activateWindow()
 
     def _show_stats(self) -> None:
-        from .ui import StatsWindow
-        if self._stats_window is None:
-            self._stats_window = StatsWindow(self._history)
-        self._stats_window.refresh()
-        self._stats_window.show()
-        self._stats_window.raise_()
-        self._stats_window.activateWindow()
+        # Statistics now live in the main window (Overview tiles + History page).
+        if self._settings is None:
+            return
+        self._settings.show_page("history")
+        self._show_settings()
 
     # ----- Updates -----
     def _check_for_updates(self) -> None:
@@ -541,9 +642,62 @@ class App(QObject):
             self._worker._post_processing_enabled = bool(new_cfg.get("post_processing_enabled", False))
             self._worker._postprocessor = self._build_postprocessor(new_cfg)
 
+        # Input device (takes effect on the next recording)
+        if self._recorder is not None:
+            self._recorder.set_device(self._resolve_input_device(new_cfg))
+
+        # Overlay visibility + corner
+        self._overlay_enabled = bool(new_cfg.get("show_overlay", True))
+        if self._overlay is not None:
+            self._overlay.set_position(str(new_cfg.get("overlay_position", "bottom_right")))
+            if not self._overlay_enabled:
+                self._overlay.hide()
+
+        # Windows startup registration
+        self._apply_launch_at_login(bool(new_cfg.get("launch_at_login", False)))
+
+        # NOTE adapter points (settings are persisted; runtime behavior pending):
+        # - noise_gate_enabled: apply an RMS gate to `audio` in TranscriptionWorker.run
+        #   before transcribe().
+        # - warmup_on_launch: read at worker startup only; a change applies next launch.
+        # sound_feedback is live: _set_state reads it from self._cfg on every transition.
+
         # Sync config to tray so its menu reflects current values
         if self._tray is not None:
             self._tray.update_config(new_cfg)
+
+    @staticmethod
+    def _apply_launch_at_login(enabled: bool) -> None:
+        """Register/unregister JasperVoice in the per-user Windows Run key.
+
+        Only effective in the frozen (installed) build — registering a dev
+        `python -m jaspervoice` invocation at login would be wrong, so dev
+        runs just log and skip.
+        """
+        if sys.platform != "win32":
+            return
+        if not getattr(sys, "frozen", False):
+            log.info("launch_at_login=%s noted; registry not touched in dev runs", enabled)
+            return
+        try:
+            import winreg
+
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE,
+            )
+            with key:
+                if enabled:
+                    winreg.SetValueEx(key, "JasperVoice", 0, winreg.REG_SZ, f'"{sys.executable}"')
+                else:
+                    try:
+                        winreg.DeleteValue(key, "JasperVoice")
+                    except FileNotFoundError:
+                        pass
+        except OSError as e:
+            log.error("Could not update launch-at-login registration: %s", e)
 
     def _shutdown(self) -> None:
         if getattr(self, "_shutting_down", False):
@@ -590,16 +744,10 @@ class App(QObject):
             pass
         try:
             if self._settings is not None:
+                self._settings.shutdown_workers()
                 self._settings.hide()
                 self._settings.deleteLater()
                 self._settings = None
-        except Exception:
-            pass
-        try:
-            if self._stats_window is not None:
-                self._stats_window.hide()
-                self._stats_window.deleteLater()
-                self._stats_window = None
         except Exception:
             pass
         try:
@@ -631,6 +779,9 @@ class App(QObject):
             return 0
         self.setup()
         log.info("JasperVoice running. Hotkey: %s", self._cfg["hotkey"])
+        # Honor "start minimized to tray": when off, open the main window.
+        if not self._cfg.get("start_minimized", True):
+            self._show_settings()
         # Optional, non-blocking update check shortly after startup. Scheduled
         # here (not in setup()) so test harnesses that call setup() directly
         # never trigger a network check. Any failure is swallowed; it only

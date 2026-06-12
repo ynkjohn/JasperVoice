@@ -54,6 +54,41 @@ def test_empty_text_not_added(tmp_path, monkeypatch):
     assert h.count == 0
 
 
+def test_remove_at_deletes_and_persists(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    h = TranscriptionHistory()
+    h.add("first")
+    h.add("second")
+    h.add("third")
+    assert h.remove_at(1) is True
+    assert [e.text for e in h.entries()] == ["first", "third"]
+    h2 = TranscriptionHistory()
+    assert [e.text for e in h2.entries()] == ["first", "third"]
+
+
+def test_remove_at_out_of_range_returns_false(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    h = TranscriptionHistory()
+    h.add("only")
+    assert h.remove_at(5) is False
+    assert h.remove_at(-1) is False
+    assert h.count == 1
+
+
+def test_export_to_writes_json(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    h = TranscriptionHistory()
+    h.add("hello world", duration_s=2.0, mode="toggle")
+    out = tmp_path / "out.json"
+    count = h.export_to(out)
+    assert count == 1
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data[0]["text"] == "hello world"
+    assert data[0]["mode"] == "toggle"
+
+
 def test_wpm_calculation(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     h = TranscriptionHistory()

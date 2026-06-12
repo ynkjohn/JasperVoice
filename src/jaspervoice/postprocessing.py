@@ -109,6 +109,70 @@ def _build_url(base_url: str) -> str:
     return f"{base}/v1/chat/completions"
 
 
+def _build_models_url(base_url: str) -> str:
+    """Build the model-list endpoint URL (same '/v1' convention as _build_url)."""
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/models"
+    return f"{base}/v1/models"
+
+
+def fetch_available_models(
+    base_url: str,
+    api_key_env: str = "OPENCODE_API_KEY",
+    timeout_s: int = 20,
+    request_fn: Optional[Callable[[str, dict[str, str], int], bytes]] = None,
+) -> list[str]:
+    """GET the provider's model list (OpenAI-compatible `/models` endpoint).
+
+    Returns sorted model ids. The API key is optional — local servers such as
+    Ollama or LM Studio accept unauthenticated requests. Raises
+    PostProcessorError on any failure; never raises raw exceptions.
+    """
+    if not base_url.strip():
+        raise PostProcessorError("Endpoint is empty. Fill in the provider base URL first.")
+
+    headers = {"Accept": "application/json"}
+    api_key = os.environ.get(api_key_env or "")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    def _default_get(url: str, hdrs: dict[str, str], timeout: int) -> bytes:
+        req = _urllib.Request(url, headers=hdrs, method="GET")
+        try:
+            with _urllib.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except _URLError as e:
+            raise PostProcessorError(f"HTTP request failed: {e}") from e
+
+    url = _build_models_url(base_url)
+    try:
+        raw = (request_fn or _default_get)(url, headers, timeout_s)
+    except PostProcessorError:
+        raise
+    except Exception as e:
+        raise PostProcessorError(f"Could not reach {url}: {e}") from e
+
+    try:
+        data = _json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        raise PostProcessorError(f"Invalid JSON response from API: {e}") from e
+
+    # OpenAI shape: {"data": [{"id": ...}, ...]}; some servers return a bare list.
+    items = data.get("data") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        raise PostProcessorError("API response has no model list")
+    models = []
+    for item in items:
+        if isinstance(item, dict) and item.get("id"):
+            models.append(str(item["id"]))
+        elif isinstance(item, str) and item:
+            models.append(item)
+    if not models:
+        raise PostProcessorError("The provider returned an empty model list")
+    return sorted(set(models))
+
+
 def _make_request(url: str, body: bytes, headers: dict[str, str], timeout_s: int) -> bytes:
     """Default request function. Uses stdlib urllib."""
     req = _urllib.Request(url, data=body, headers=headers, method="POST")

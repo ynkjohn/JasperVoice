@@ -91,3 +91,40 @@ def test_DictionaryEntry_instances_accepted():
 def test_none_entries_is_same_as_empty():
     d = DeveloperDictionary(None)
     assert d.apply("hello") == "hello"
+
+
+# --- Enabled / disabled rules ---
+
+def test_disabled_rule_is_not_applied():
+    d = DeveloperDictionary([
+        {"phrase": "py side", "replacement": "PySide6", "enabled": False},
+    ])
+    assert d.apply("use py side here") == "use py side here"
+
+
+def test_missing_enabled_defaults_to_true():
+    d = DeveloperDictionary([{"phrase": "py side", "replacement": "PySide6"}])
+    assert d.apply("py side") == "PySide6"
+
+
+def test_mixed_enabled_and_disabled_rules():
+    d = DeveloperDictionary([
+        {"phrase": "git lab", "replacement": "GitLab"},
+        {"phrase": "py side", "replacement": "PySide6", "enabled": False},
+    ])
+    assert d.apply("git lab and py side") == "GitLab and py side"
+
+
+def test_DictionaryEntry_disabled_is_ignored():
+    d = DeveloperDictionary([
+        DictionaryEntry(phrase="react", replacement="React", enabled=False),
+    ])
+    assert d.apply("react") == "react"
+
+
+def test_disabled_rules_still_listed_in_entries():
+    d = DeveloperDictionary([
+        {"phrase": "py side", "replacement": "PySide6", "enabled": False},
+    ])
+    assert len(d._entries) == 1
+    assert d._entries[0].enabled is False

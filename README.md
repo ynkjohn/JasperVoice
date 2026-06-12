@@ -12,7 +12,8 @@ Local push-to-talk voice dictation for Windows. Hold a hotkey, speak, release �
 - **Animated overlay** — a floating pill with a live audio spectrum while you speak
 - **Transcription history & statistics** — words, audio time, average WPM
 - **Developer dictionary** — offline phrase corrections for technical terms
-- **Optional AI post-processing** via an OpenAI-compatible API
+- **Optional AI post-processing** via any OpenAI-compatible API (with in-app model discovery)
+- **Sound feedback** — optional quiet tones on recording start/stop, send, and error
 - **System tray control** with language switching
 - **Private by default** — audio never leaves your machine; text leaves only if you enable optional post-processing
 
@@ -127,10 +128,12 @@ Edit `%APPDATA%/JasperVoice/config.json`:
 }
 ```
 
-Core settings also live in the in-app **Settings** window (tray → Settings…),
-which applies changes live. Advanced dictionary and post-processing options are
-currently edited in `config.json`. Available languages: `pt`, `en`, `es`,
-`auto` (and any ISO 639-1 code).
+Everything is also editable in the in-app window (tray → Settings…): a
+navigable sidebar with Overview, History, Dictionary, General, Audio & Mic,
+Model & Engine, AI Polish, Updates, and Diagnostics pages, plus a settings
+search. Changes apply live on **Apply**; dictionary and history edits are
+saved immediately. Available languages: `pt`, `en`, `es`, `auto` (and any
+ISO 639-1 code).
 
 ### Hotkey modes
 
@@ -142,9 +145,11 @@ currently edited in `config.json`. Available languages: `pt`, `en`, `es`,
 
 Every transcription is stored locally in
 `%APPDATA%/JasperVoice/history.json` (capped at 200 entries) with its word
-count, audio duration, and the mode used. Open tray → **Statistics…** to see
-totals, average words-per-minute, and a table of recent transcriptions. Use
-**Clear history** in that window to wipe it.
+count, audio duration, and the mode used. Open tray → **Statistics…** (or the
+**History** page in the main window) to see totals, average words-per-minute,
+and a searchable, filterable table of recent transcriptions with per-row copy
+and delete. **Export…** writes the history to a JSON file of your choice;
+**Clear** wipes it after confirmation.
 
 ### Developer Dictionary
 
@@ -163,9 +168,19 @@ The dictionary is a local, offline list of phrase→replacement mappings. It cor
 
 Matching is case-insensitive, respects word boundaries, and applies longer phrases first. Replacements run entirely on your machine.
 
-### OpenCode Post-Processing
+Rules can also be managed on the **Dictionary** page of the main window (add,
+delete, enable/disable per rule, JSON import/export). A rule with
+`"enabled": false` is kept but not applied; entries without the key are
+enabled.
 
-Optionally refine dictation with an OpenAI-compatible API after Whisper:
+### AI Polish (post-processing)
+
+Optionally refine dictation with **any OpenAI-compatible API** after Whisper —
+local (Ollama, LM Studio, vLLM) or remote (OpenRouter, OpenCode, cloud). The
+**AI Polish** page configures everything: provider, endpoint, API key (as an
+environment-variable name — the key itself is never stored), output style, and
+a **Fetch models** button that queries the provider's `/v1/models` list so you
+can pick a Fast and a Smart model. The equivalent `config.json` keys:
 
 ```json
 {
@@ -199,6 +214,12 @@ With `"device": "auto"`, `transcription.py` tries CUDA first and falls back to
 CPU if loading fails. Set `"device": "cuda"` to force GPU (errors will surface
 instead of silently falling back), or `"device": "cpu"` to force CPU. On GPU,
 `"compute_type": "float16"` is the recommended setting.
+
+The **Model & Engine** page probes your hardware and shows a friendly
+recommendation ("On this PC, GPU (CUDA) with float16 is recommended" / "CPU
+with int8 is the best option"). It also manages the local Whisper models:
+download any size ahead of time (in the background, without freezing the app)
+or remove an installed model from disk.
 
 ### Standalone build
 
@@ -245,7 +266,9 @@ postprocessing.py  optional OpenCode/OpenAI-compatible text polish
 dictionary.py      offline phrase→replacement corrections
 tray.py            QSystemTrayIcon with state icons + language/settings/stats/update menu
 overlay.py         frameless floating pill indicator (animated, state-colored)
-ui.py              SettingsWindow + StatsWindow + UpdateDialog (card-based dark UI)
+ui.py              navigable main window shell (sidebar/search/pages) + UpdateDialog
+ui_pages.py        the window's pages (Overview, History, Dictionary, …)
+ui_widgets.py      shared UI primitives (Switch, SegmentedControl, LevelMeter, …)
 single_instance.py named-mutex guard used by the app and installer
 updater.py         GitHub Releases update check/download/verify/launch flow
 assets.py          icon path resolution for dev and frozen runs
