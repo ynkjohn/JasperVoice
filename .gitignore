@@ -27,8 +27,12 @@ config.json.bak
 history.json
 
 # Non-project scratch (UI prototyping + skill benchmark runs, not part of the app)
+prototype/
 design/
 benchmark/
 
 # Local agent/chat transcripts
 session-*.md
+
+# Local agent instructions (not shipped with the project)
+AGENTS.md
