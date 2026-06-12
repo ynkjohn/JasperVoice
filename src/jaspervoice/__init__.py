@@ -10,4 +10,4 @@ by:
 Bump this one line to release a new version; everything downstream follows.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
