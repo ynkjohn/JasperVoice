@@ -34,7 +34,7 @@ from .theme import STATE_COLORS
 
 log = logging.getLogger(__name__)
 
-# --- Dimensions (match the HTML prototype) ---
+# --- Dimensions tuned for the floating pill indicator ---
 PILL_IDLE_SIZE = 44
 PILL_EXPANDED_WIDTH = 160
 PILL_EXPANDED_HEIGHT = 44

@@ -1,6 +1,6 @@
 # JasperVoice
 
-Local push-to-talk voice dictation for Windows. Hold a hotkey, speak, release — your words land in whatever app has focus. Whisper runs entirely on your machine. No cloud, no subscription, no telemetry.
+Local push-to-talk voice dictation for Windows. Hold a hotkey, speak, release — your words land in whatever app has focus. Whisper runs entirely on your machine by default. No subscription, no telemetry.
 
 ## Features
 
@@ -14,15 +14,14 @@ Local push-to-talk voice dictation for Windows. Hold a hotkey, speak, release �
 - **Developer dictionary** — offline phrase corrections for technical terms
 - **Optional AI post-processing** via an OpenAI-compatible API
 - **System tray control** with language switching
-- **No data leaves your machine**
+- **Private by default** — audio never leaves your machine; text leaves only if you enable optional post-processing
 
 ## Quick start
 
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python -m jaspervoice
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m jaspervoice
 ```
 
 First run downloads the Whisper `small` model (~460 MB) to `%APPDATA%/JasperVoice/models/`.
@@ -32,9 +31,9 @@ First run downloads the Whisper `small` model (~460 MB) to `%APPDATA%/JasperVoic
 To run JasperVoice by double-clicking instead of launching from the terminal,
 build a windowed executable with PyInstaller:
 
-```bash
-pip install -r requirements-dev.txt
-pyinstaller jaspervoice.spec --noconfirm
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\pyinstaller.exe jaspervoice.spec --noconfirm
 ```
 
 Output lands in `dist/JasperVoice/`. Launch `dist/JasperVoice/JasperVoice.exe` —
@@ -46,10 +45,10 @@ Notes:
 - The build is a **one-folder** bundle. Keep `JasperVoice.exe` next to its
   `_internal/` folder; moving the exe alone will break it. To relocate, move
   the whole `JasperVoice` folder.
-- **Bundle size depends on GPU support.** If the `nvidia-*` CUDA packages are
-  installed in your venv, the build bundles the CUDA runtime and the folder is
-  ~3 GB (cuBLAS alone is ~735 MB). Without those packages it produces a
-  CPU-only bundle of ~1 GB. See [GPU acceleration](#gpu-acceleration).
+- **Bundle size depends on GPU support.** The default GPU build bundles cuBLAS
+  (about 735 MB by itself), producing a one-folder bundle around 1.1 GB and a
+  compressed installer around 514 MB. Without `nvidia-*` packages the build is
+  CPU-only and omits the CUDA DLLs. See [GPU acceleration](#gpu-acceleration).
 - The Whisper model is **not** bundled. It still downloads on first run to
   `%APPDATA%/JasperVoice/models/`, exactly like the dev workflow.
 - Logs go to `%APPDATA%/JasperVoice/jaspervoice.log` (rotating) since the
@@ -57,7 +56,7 @@ Notes:
 
 ## Installer & updates
 
-For a Discord-style experience — download a small installer, run it, and the
+For a Discord-style experience — download a single installer, run it, and the
 app behaves like a normal Windows application — JasperVoice ships an
 [Inno Setup](https://jrsoftware.org/isinfo.php) installer plus an in-app
 updater backed by GitHub Releases.
@@ -65,7 +64,8 @@ updater backed by GitHub Releases.
 ### Build a release
 
 ```powershell
-# Requires Inno Setup 6 (ISCC.exe) on PATH or in Program Files.
+# Requires Inno Setup 6. The script auto-detects PATH, Program Files,
+# and winget's per-user install path.
 .venv\Scripts\pip.exe install -r requirements-dev.txt
 .\scripts\build_release.ps1
 ```
@@ -127,9 +127,10 @@ Edit `%APPDATA%/JasperVoice/config.json`:
 }
 ```
 
-Most settings also live in the in-app **Settings** window (tray → Settings…),
-which applies changes live. Available languages: `pt`, `en`, `es`, `auto` (and
-any ISO 639-1 code).
+Core settings also live in the in-app **Settings** window (tray → Settings…),
+which applies changes live. Advanced dictionary and post-processing options are
+currently edited in `config.json`. Available languages: `pt`, `en`, `es`,
+`auto` (and any ISO 639-1 code).
 
 ### Hotkey modes
 
@@ -242,13 +243,16 @@ hotkey.py          push-to-talk / toggle state machine on top of `keyboard` lib
 history.py         thread-safe transcription history (JSON, capped at 200)
 postprocessing.py  optional OpenCode/OpenAI-compatible text polish
 dictionary.py      offline phrase→replacement corrections
-tray.py            QSystemTrayIcon with state icons + language/settings/stats menu
+tray.py            QSystemTrayIcon with state icons + language/settings/stats/update menu
 overlay.py         frameless floating pill indicator (animated, state-colored)
-ui.py              SettingsWindow + StatsWindow (card-based dark UI)
+ui.py              SettingsWindow + StatsWindow + UpdateDialog (card-based dark UI)
+single_instance.py named-mutex guard used by the app and installer
+updater.py         GitHub Releases update check/download/verify/launch flow
+assets.py          icon path resolution for dev and frozen runs
+app_gui.py         frozen/windowed entry point with file logging
 theme.py           dark QSS + STATE_COLORS palette
 app.py             wires it all together
 ```
 
-Each module is small and replaceable. Working on the code with an AI agent? See
-`AGENTS.md` for conventions and the non-obvious threading/animation constraints.
-See `openspec/changes/jaspervoice-mvp/` for the original design rationale.
+Each module is small and replaceable. See `openspec/changes/jaspervoice-mvp/`
+for the original design rationale.

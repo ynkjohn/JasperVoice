@@ -1,6 +1,6 @@
 """Self-update for JasperVoice via GitHub Releases (failure-safe, offline-capable).
 
-Design goals (see the distribution plan in AGENTS.md):
+Design goals:
 
 - **Never break the app.** Every network/file operation is wrapped; a failed
   update check leaves the running app fully usable. Callers get ``None`` or a

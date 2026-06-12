@@ -3,7 +3,7 @@
 ; Produces a single small bootstrapper EXE (JasperVoice-Setup-<ver>.exe) that
 ; installs the PyInstaller one-folder bundle like a normal Windows desktop app.
 ;
-; Design decisions (see AGENTS.md "Distribution"):
+; Design decisions:
 ;   * PER-USER install (PrivilegesRequired=lowest). The app needs no admin to
 ;     run; installing under %LocalAppData% avoids UAC for both first install and
 ;     every auto-update. (The global-hotkey hook may still prompt for admin at
