@@ -172,3 +172,45 @@ def test_levels_updated_signal(qapp):
     o.levels_updated.emit([0.1, 0.3, 0.5, 0.7, 0.4])
     qapp.processEvents()
     assert len(o._levels) == 5
+
+
+def test_recording_bars_track_real_levels(qapp):
+    """High audio levels must drive taller bars than near-silent levels.
+
+    Guards the (previously dead) FFT -> levels_updated -> bar-height pipeline:
+    _on_frame must read self._levels during recording, not just synthetic sine.
+    """
+    from jaspervoice.overlay import BAR_MIN_HEIGHT, NUM_BANDS
+
+    o = RecordingOverlay()
+    o.set_state("recording")
+
+    # Feed loud levels and settle the smoothing for several frames.
+    o.levels_updated.emit([1.0] * NUM_BANDS)
+    qapp.processEvents()
+    for _ in range(40):
+        o._on_frame()
+    loud = list(o._bar_heights)
+
+    # Now feed silence and settle again.
+    o.levels_updated.emit([0.0] * NUM_BANDS)
+    qapp.processEvents()
+    for _ in range(40):
+        o._on_frame()
+    quiet = list(o._bar_heights)
+
+    assert max(loud) > max(quiet)
+    assert max(loud) > BAR_MIN_HEIGHT + 1.0
+
+
+def test_recording_resets_stale_levels(qapp):
+    """Starting a new recording clears band levels from the previous take."""
+    from jaspervoice.overlay import NUM_BANDS
+
+    o = RecordingOverlay()
+    o.set_state("recording")
+    o.levels_updated.emit([0.9] * NUM_BANDS)
+    qapp.processEvents()
+    o.set_state("idle")
+    o.set_state("recording")
+    assert o._levels == [0.0] * NUM_BANDS

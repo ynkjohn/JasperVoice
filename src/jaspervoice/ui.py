@@ -14,14 +14,19 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QKeySequenceEdit,
     QLabel,
+    QLineEdit,
     QMainWindow,
+    QMessageBox,
+    QProgressBar,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -32,6 +37,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtCore import QThread
 
 from . import __version__
 from . import config as cfg_mod
@@ -268,6 +274,7 @@ class SettingsWindow(QMainWindow):
         content.addWidget(self._build_general_card())
         content.addWidget(self._build_whisper_card())
         content.addWidget(self._build_behavior_card())
+        content.addWidget(self._build_updates_card())
         content.addWidget(self._build_diagnostics_card())
         content.addStretch(1)
 
@@ -405,6 +412,51 @@ class SettingsWindow(QMainWindow):
         box.addLayout(grid)
         return frame
 
+    def _build_updates_card(self) -> QFrame:
+        frame, box = _card("Updates")
+
+        self.update_check_enabled = QCheckBox(
+            "Check GitHub for updates when JasperVoice starts"
+        )
+        self.update_check_enabled.toggled.connect(self._mark_dirty)
+        box.addWidget(self.update_check_enabled)
+        box.addWidget(_hint_label(
+            "Only the public release list is queried — no account, no telemetry, "
+            "and no source code is downloaded. Updates install from a signed, "
+            "checksum-verified installer. JasperVoice works fully offline if this "
+            "is off or the check fails."
+        ))
+
+        grid = self._field_grid()
+        self.update_repo_edit = QLineEdit()
+        self.update_repo_edit.setMaximumWidth(280)
+        self.update_repo_edit.setPlaceholderText("owner/repo")
+        self.update_repo_edit.textChanged.connect(self._mark_dirty)
+        self._add_field(
+            grid, 0, "Release source", self.update_repo_edit,
+            "GitHub repository to check for releases (owner/repo).",
+        )
+        box.addLayout(grid)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(10)
+        check_btn = QPushButton("Check now...")
+        check_btn.setMaximumWidth(160)
+        check_btn.clicked.connect(self._open_update_dialog)
+        btn_row.addWidget(check_btn)
+        offline_btn = QPushButton("Install from file...")
+        offline_btn.setMaximumWidth(180)
+        offline_btn.clicked.connect(self._install_from_file)
+        btn_row.addWidget(offline_btn)
+        btn_row.addStretch(1)
+        box.addLayout(btn_row)
+        box.addWidget(_hint_label(
+            "\"Install from file\" runs an installer .exe you downloaded yourself "
+            "(offline / air-gapped). It is checked for integrity before running."
+        ))
+        return frame
+
     def _build_diagnostics_card(self) -> QFrame:
         frame, box = _card("Diagnostics")
         grid = QGridLayout()
@@ -505,6 +557,8 @@ class SettingsWindow(QMainWindow):
             self._check_radio(self._compute_radios, self._cfg["compute_type"], "int8")
             self.paste_delay.setValue(int(self._cfg.get("paste_delay_ms", 15)))
             self.min_duration.setValue(int(self._cfg.get("min_recording_ms", 200)))
+            self.update_check_enabled.setChecked(bool(self._cfg.get("update_check_enabled", True)))
+            self.update_repo_edit.setText(str(self._cfg.get("update_repo", DEFAULT_CONFIG["update_repo"])))
         finally:
             for w in widgets:
                 w.blockSignals(False)
@@ -520,6 +574,8 @@ class SettingsWindow(QMainWindow):
             self.hotkey_mode_combo,
             self.paste_delay,
             self.min_duration,
+            self.update_check_enabled,
+            self.update_repo_edit,
             *self._model_radios.values(),
             *self._device_radios.values(),
             *self._compute_radios.values(),
@@ -555,6 +611,8 @@ class SettingsWindow(QMainWindow):
             "compute_type": self._checked_key(self._compute_radios, "int8"),
             "paste_delay_ms": int(self.paste_delay.value()),
             "min_recording_ms": int(self.min_duration.value()),
+            "update_check_enabled": bool(self.update_check_enabled.isChecked()),
+            "update_repo": self.update_repo_edit.text().strip() or DEFAULT_CONFIG["update_repo"],
         }
 
     @staticmethod
@@ -605,6 +663,47 @@ class SettingsWindow(QMainWindow):
     def update_config(self, cfg: dict) -> None:
         self._cfg = deepcopy(cfg)
         self._load_values_into_ui()
+
+    # --- Update actions ---
+
+    def _open_update_dialog(self) -> None:
+        repo = self.update_repo_edit.text().strip() or DEFAULT_CONFIG["update_repo"]
+        dlg = UpdateDialog(repo=repo, parent=self)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        self._update_dialog = dlg  # keep a reference
+
+    def _install_from_file(self) -> None:
+        from . import updater
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select JasperVoice installer", "",
+            "Installer (*.exe);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            installer = updater.stage_local_installer(path)
+        except updater.UpdateError as e:
+            QMessageBox.warning(self, "JasperVoice", f"Cannot use that file:\n{e}")
+            return
+        confirm = QMessageBox.question(
+            self, "JasperVoice",
+            f"Run this installer now?\n\n{installer.name}\n\n"
+            "JasperVoice will close while it updates, then relaunch.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            updater.launch_installer(installer, silent=False)
+        except updater.UpdateError as e:
+            QMessageBox.warning(self, "JasperVoice", f"Could not launch installer:\n{e}")
+            return
+        # Quit so the installer can replace locked files.
+        from PySide6.QtWidgets import QApplication
+        QApplication.quit()
 
 
 class StatsWindow(QMainWindow):
@@ -688,3 +787,233 @@ class StatsWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: ARG002
         self.hide()
+
+
+# --- Update dialog + background workers ---
+
+class _CheckWorker(QObject):
+    """Runs updater.check_for_update off the UI thread."""
+
+    done = Signal(object)   # UpdateInfo or None
+    error = Signal(str)
+
+    def __init__(self, repo: str) -> None:
+        super().__init__()
+        self._repo = repo
+
+    def run(self) -> None:
+        from . import updater
+
+        try:
+            info = updater.check_for_update(repo=self._repo)
+            self.done.emit(info)
+        except updater.UpdateError as e:
+            self.error.emit(str(e))
+        except Exception as e:  # never crash the thread
+            self.error.emit(f"Unexpected error: {e}")
+
+
+class _DownloadWorker(QObject):
+    """Downloads + verifies the installer off the UI thread."""
+
+    progress = Signal(int, int)  # got, total
+    done = Signal(str)           # installer path
+    error = Signal(str)
+
+    def __init__(self, info) -> None:
+        super().__init__()
+        self._info = info
+
+    def run(self) -> None:
+        from . import updater
+
+        try:
+            path = updater.download_installer(
+                self._info, progress=lambda g, t: self.progress.emit(g, t)
+            )
+            self.done.emit(str(path))
+        except updater.UpdateError as e:
+            self.error.emit(str(e))
+        except Exception as e:
+            self.error.emit(f"Unexpected error: {e}")
+
+
+class UpdateDialog(QMainWindow):
+    """Manual update flow: check → show result → download+verify → install.
+
+    Every step is failure-safe — errors are shown inline and the dialog can be
+    closed at any time without affecting the running app.
+    """
+
+    def __init__(self, repo: str, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self.setWindowTitle("JasperVoice — Updates")
+        self.setMinimumSize(460, 280)
+        self.resize(520, 340)
+        self._repo = repo
+        self._info = None
+        self._installer_path: Optional[str] = None
+        self._thread: Optional[QThread] = None
+        self._worker = None
+        self._build_ui()
+        self._start_check()
+
+    def _build_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(14)
+
+        frame, box = _card("Software Update")
+        self._status = QLabel("Checking for updates…")
+        self._status.setWordWrap(True)
+        self._status.setProperty("role", "fieldlabel")
+        box.addWidget(self._status)
+
+        self._notes = QLabel("")
+        self._notes.setWordWrap(True)
+        self._notes.setProperty("role", "muted")
+        self._notes.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        box.addWidget(self._notes)
+
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 100)
+        self._progress.setVisible(False)
+        box.addWidget(self._progress)
+        root.addWidget(frame)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self._action_btn = QPushButton("Checking…")
+        self._action_btn.setProperty("primary", True)
+        self._action_btn.setEnabled(False)
+        self._action_btn.clicked.connect(self._on_action)
+        self._close_btn = QPushButton("Close")
+        self._close_btn.clicked.connect(self.close)
+        row.addWidget(self._close_btn)
+        row.addWidget(self._action_btn)
+        root.addLayout(row)
+
+    # --- Check phase ---
+
+    def _start_check(self) -> None:
+        self._thread = QThread()
+        self._worker = _CheckWorker(self._repo)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.done.connect(self._on_check_done, Qt.ConnectionType.QueuedConnection)
+        self._worker.error.connect(self._on_check_error, Qt.ConnectionType.QueuedConnection)
+        self._thread.start()
+
+    def _on_check_done(self, info) -> None:
+        self._teardown_thread()
+        if info is None:
+            self._status.setText("You're on the latest version.")
+            self._action_btn.setText("Up to date")
+            self._action_btn.setEnabled(False)
+            return
+        self._info = info
+        self._status.setText(
+            f"Version {info.version} is available."
+            + ("" if info.sha256 else "\n\nWarning: no checksum published for this release.")
+        )
+        notes = (info.notes or "").strip()
+        if notes:
+            self._notes.setText(notes[:600] + ("…" if len(notes) > 600 else ""))
+        self._action_btn.setText("Download && Install")
+        self._action_btn.setEnabled(bool(info.sha256))
+        if not info.sha256:
+            self._status.setText(
+                self._status.text()
+                + "\n\nInstall blocked: integrity cannot be verified."
+            )
+
+    def _on_check_error(self, msg: str) -> None:
+        self._teardown_thread()
+        self._status.setText(
+            "Could not check for updates. JasperVoice keeps working normally.\n\n"
+            f"{msg}"
+        )
+        self._action_btn.setText("Retry")
+        self._action_btn.setEnabled(True)
+        self._retry = True
+
+    # --- Action button ---
+
+    def _on_action(self) -> None:
+        if getattr(self, "_retry", False) and self._info is None:
+            self._retry = False
+            self._status.setText("Checking for updates…")
+            self._action_btn.setEnabled(False)
+            self._start_check()
+            return
+        if self._installer_path:
+            self._launch_install()
+            return
+        if self._info is not None:
+            self._start_download()
+
+    # --- Download phase ---
+
+    def _start_download(self) -> None:
+        self._action_btn.setEnabled(False)
+        self._progress.setVisible(True)
+        self._progress.setValue(0)
+        self._status.setText(f"Downloading version {self._info.version}…")
+        self._thread = QThread()
+        self._worker = _DownloadWorker(self._info)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self._on_progress, Qt.ConnectionType.QueuedConnection)
+        self._worker.done.connect(self._on_download_done, Qt.ConnectionType.QueuedConnection)
+        self._worker.error.connect(self._on_download_error, Qt.ConnectionType.QueuedConnection)
+        self._thread.start()
+
+    def _on_progress(self, got: int, total: int) -> None:
+        if total > 0:
+            self._progress.setValue(int(got * 100 / total))
+
+    def _on_download_done(self, path: str) -> None:
+        self._teardown_thread()
+        self._installer_path = path
+        self._progress.setValue(100)
+        self._status.setText(
+            "Downloaded and verified. Click Install to update — JasperVoice will "
+            "close, update, and relaunch."
+        )
+        self._action_btn.setText("Install")
+        self._action_btn.setEnabled(True)
+
+    def _on_download_error(self, msg: str) -> None:
+        self._teardown_thread()
+        self._progress.setVisible(False)
+        self._status.setText(
+            f"Download failed. Nothing was changed.\n\n{msg}"
+        )
+        self._action_btn.setText("Retry")
+        self._action_btn.setEnabled(True)
+
+    def _launch_install(self) -> None:
+        from . import updater
+        from PySide6.QtWidgets import QApplication
+
+        try:
+            updater.launch_installer(self._installer_path, silent=False)
+        except updater.UpdateError as e:
+            QMessageBox.warning(self, "JasperVoice", f"Could not launch installer:\n{e}")
+            return
+        QApplication.quit()
+
+    # --- Lifecycle ---
+
+    def _teardown_thread(self) -> None:
+        if self._thread is not None:
+            self._thread.quit()
+            self._thread.wait(2000)
+            self._thread = None
+        self._worker = None
+
+    def closeEvent(self, event) -> None:  # noqa: ARG002
+        self._teardown_thread()
+        super().closeEvent(event)

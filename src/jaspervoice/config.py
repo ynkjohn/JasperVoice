@@ -37,6 +37,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "opencode_smart_model": "Qwen3.7 Max",
     "opencode_timeout_s": 20,
     "dictionary": [],
+    # --- Updates (GitHub Releases). All optional; the app runs fine offline. ---
+    "update_check_enabled": True,
+    "update_repo": "ynkjohn/JasperVoice",
 }
 
 VALID_PROVIDERS = {"none", "opencode"}
@@ -141,6 +144,12 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
             if phrase and replacement:
                 cleaned.append({"phrase": phrase, "replacement": replacement})
         out["dictionary"] = cleaned
+    if not isinstance(out.get("update_check_enabled"), bool):
+        log.warning("Invalid update_check_enabled %r, falling back to True", out.get("update_check_enabled"))
+        out["update_check_enabled"] = True
+    if not isinstance(out.get("update_repo"), str) or not out["update_repo"].strip():
+        log.warning("Invalid update_repo %r, falling back to default", out.get("update_repo"))
+        out["update_repo"] = DEFAULT_CONFIG["update_repo"]
     return out
 
 

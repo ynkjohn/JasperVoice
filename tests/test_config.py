@@ -67,6 +67,25 @@ def test_save_is_atomic(tmp_path, monkeypatch):
     assert get_config_path().read_text(encoding="utf-8").strip().startswith("{")
 
 
+def test_update_keys_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    cfg = load_config()
+    assert cfg["update_check_enabled"] is True
+    assert cfg["update_repo"] == DEFAULT_CONFIG["update_repo"]
+
+
+def test_update_keys_invalid_fall_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = get_config_path()
+    p.write_text(
+        json.dumps({"update_check_enabled": "yes", "update_repo": "  "}),
+        encoding="utf-8",
+    )
+    cfg = load_config()
+    assert cfg["update_check_enabled"] is True
+    assert cfg["update_repo"] == DEFAULT_CONFIG["update_repo"]
+
+
 def test_models_dir_created(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     d = get_models_dir()

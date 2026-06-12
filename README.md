@@ -55,6 +55,60 @@ Notes:
 - Logs go to `%APPDATA%/JasperVoice/jaspervoice.log` (rotating) since the
   windowed build has no console to print to.
 
+## Installer & updates
+
+For a Discord-style experience — download a small installer, run it, and the
+app behaves like a normal Windows application — JasperVoice ships an
+[Inno Setup](https://jrsoftware.org/isinfo.php) installer plus an in-app
+updater backed by GitHub Releases.
+
+### Build a release
+
+```powershell
+# Requires Inno Setup 6 (ISCC.exe) on PATH or in Program Files.
+.venv\Scripts\pip.exe install -r requirements-dev.txt
+.\scripts\build_release.ps1
+```
+
+This runs PyInstaller, compiles the installer, and emits two artifacts to
+`dist\installer\`:
+
+- `JasperVoice-Setup-<version>.exe` — the installer/bootstrapper.
+- `SHA256SUMS` — the checksum the in-app updater verifies before applying.
+
+Publish a GitHub Release tagged `v<version>` and upload **both** files as
+assets. That is the entire release flow — bump `__version__`, build, upload.
+
+### How the installer behaves
+
+- **Per-user install** (`%LocalAppData%\Programs\JasperVoice` by default) — no
+  admin prompt for install or updates.
+- Creates Start Menu and (optional) Desktop shortcuts. An optional checkbox
+  adds a per-user **autostart** entry (Startup folder, no registry hacks).
+- Settings, history, and the downloaded model live under
+  `%APPDATA%\JasperVoice\` and are **preserved across updates and uninstalls**.
+- Only one instance runs at a time (a named mutex shared with the installer so
+  an update can close the running app before replacing files).
+
+### Updating
+
+Tray → **Check for updates...** (or Settings → Updates → *Check now*). The app
+queries the configured GitHub repo's latest release, and if a newer version
+exists it downloads the installer, **verifies its SHA-256**, then launches it.
+The installer closes JasperVoice, replaces the files in place, and relaunches.
+
+- **Failure-safe:** if the update check or download fails (offline, GitHub
+  down, checksum mismatch), the running app is untouched and keeps working.
+- **Versioned artifacts only:** the updater downloads the published installer
+  asset, never raw source code, and never runs `git`.
+- **No telemetry:** the only network call is to the public GitHub API and the
+  asset URL, and only when you trigger a check (or enable check-on-startup).
+- **Offline / air-gapped:** Settings → Updates → **Install from file...** runs
+  an installer `.exe` you downloaded by hand. It is integrity-checked before
+  running.
+
+Disable the optional startup check entirely in Settings → Updates.
+
 ## Configuration
 
 Edit `%APPDATA%/JasperVoice/config.json`:
@@ -175,7 +229,7 @@ fine for push-to-talk. For light local testing, use `"device": "cpu"` and
 - **Clipboard is overwritten** on every transcription. If you had something copied, it's gone. Restore is a planned v1.1 feature.
 - **Global hotkey may require admin** on first run (Windows low-level keyboard hook). If PTT does not register, run from an elevated terminal.
 - **Antivirus warnings** about the `keyboard` library are false positives — it's open-source and does not exfiltrate.
-- **Single instance**: launching twice will fight for the hotkey. Use the tray "Quit" to close.
+- **Single instance**: a named mutex prevents a second copy from running (a second launch shows a tray notice and exits). Use the tray "Quit" to close.
 
 ## Architecture
 

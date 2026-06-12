@@ -194,3 +194,19 @@ def test_hotkey_mode_in_collect_values(qapp, default_cfg):
     w.hotkey_mode_combo.setCurrentIndex(1)  # toggle
     collected = w._collect_values()
     assert collected["hotkey_mode"] == "toggle"
+
+
+def test_update_settings_in_collect_values(qapp, default_cfg):
+    w = SettingsWindow(default_cfg)
+    w.update_check_enabled.setChecked(False)
+    w.update_repo_edit.setText("someone/Fork")
+    collected = w._collect_values()
+    assert collected["update_check_enabled"] is False
+    assert collected["update_repo"] == "someone/Fork"
+
+
+def test_update_repo_blank_falls_back_to_default(qapp, default_cfg):
+    w = SettingsWindow(default_cfg)
+    w.update_repo_edit.setText("   ")
+    collected = w._collect_values()
+    assert collected["update_repo"] == DEFAULT_CONFIG["update_repo"]

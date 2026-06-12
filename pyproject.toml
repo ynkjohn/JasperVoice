@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jaspervoice"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Local push-to-talk voice dictation for Windows (Whisper + global hotkey + universal text injection)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,9 @@ jaspervoice = "jaspervoice.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "jaspervoice.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

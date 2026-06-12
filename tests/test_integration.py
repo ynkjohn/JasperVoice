@@ -147,6 +147,92 @@ def test_tray_settings_requested_opens_settings(qt_app, tmp_path, monkeypatch):
         a._shutdown()
 
 
+def test_startup_update_check_notifies_on_available(qt_app, tmp_path, monkeypatch):
+    """_startup_update_check must run the check off-thread and, when an update
+    is available, surface a tray balloon without opening any window."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+        "update_check_enabled": True,
+        "update_repo": "owner/repo",
+    })
+
+    from jaspervoice.updater import UpdateInfo
+    fake = UpdateInfo(
+        version="9.9.9", tag="v9.9.9", asset_name="JasperVoice-Setup-9.9.9.exe",
+        asset_url="https://example/dl", asset_size=1234, sha256="0" * 64, notes="",
+    )
+    monkeypatch.setattr(
+        "jaspervoice.updater.check_for_update",
+        lambda repo=None: fake,
+    )
+
+    messages = []
+    a = App()
+    a.setup()
+    try:
+        monkeypatch.setattr(
+            a._tray, "show_message",
+            lambda title, body, msec=3000: messages.append((title, body)),
+        )
+        a._startup_update_check()
+        deadline = time.monotonic() + 10.0
+        while not messages and time.monotonic() < deadline:
+            qt_app.processEvents(QEventLoop.AllEvents, 50)
+        assert messages, "expected a tray notification for the available update"
+        assert "9.9.9" in messages[0][1]
+        # No settings/update window should have popped up.
+        assert not a._settings.isVisible()
+    finally:
+        a._shutdown()
+
+
+def test_startup_update_check_silent_on_error(qt_app, tmp_path, monkeypatch):
+    """A failed update check must be swallowed: no tray notice, no crash."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+        "update_check_enabled": True,
+        "update_repo": "owner/repo",
+    })
+
+    from jaspervoice.updater import UpdateError
+
+    def _boom(repo=None):
+        raise UpdateError("network down")
+
+    monkeypatch.setattr("jaspervoice.updater.check_for_update", _boom)
+
+    messages = []
+    a = App()
+    a.setup()
+    try:
+        monkeypatch.setattr(
+            a._tray, "show_message",
+            lambda title, body, msec=3000: messages.append((title, body)),
+        )
+        a._startup_update_check()
+        # Give the worker thread a window to run and fail.
+        deadline = time.monotonic() + 5.0
+        while a._startup_check_thread is not None \
+                and a._startup_check_thread.isRunning() \
+                and time.monotonic() < deadline:
+            qt_app.processEvents(QEventLoop.AllEvents, 50)
+        assert messages == []
+    finally:
+        a._shutdown()
+
+
 def test_paste_delay_ms_reaches_inject_text(qt_app, tmp_path, monkeypatch):
     """TranscriptionWorker must call inject_text with settle_ms=configured value."""
     monkeypatch.setenv("APPDATA", str(tmp_path))

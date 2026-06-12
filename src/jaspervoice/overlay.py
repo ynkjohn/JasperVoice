@@ -151,6 +151,10 @@ class RecordingOverlay(QWidget):
         else:
             self._expanded = True
             self._time = 0.0
+            # Drop any band levels left over from the previous take so the
+            # spectrum starts from silence instead of flashing stale values.
+            if state == "recording":
+                self._levels = [0.0] * NUM_BANDS
             # Ensure visible
             if not self.isVisible():
                 self.setFixedSize(PILL_IDLE_SIZE, PILL_EXPANDED_HEIGHT)
@@ -208,12 +212,15 @@ class RecordingOverlay(QWidget):
         for i in range(NUM_BANDS):
             p = (i / NUM_BANDS) * math.pi * 2
             if self._state == "recording":
-                # Organic, fast multi-sine (matching HTML prototype)
-                target = BAR_MIN_HEIGHT + (
-                    (math.sin(self._time * 4.3 + p) * 0.5 + 0.5)
-                    + (math.sin(self._time * 7.1 + p * 1.7) * 0.3 + 0.3)
-                    + (math.sin(self._time * 2.9 + p * 0.8) * 0.2 + 0.2)
-                ) * (BAR_MAX_HEIGHT - BAR_MIN_HEIGHT) * 0.85
+                # Drive the bars from the REAL per-band audio levels that the
+                # recorder computes via FFT (see audio.Recorder._compute_bands)
+                # and pushes through `levels_updated`. A small sine shimmer is
+                # added so the bars keep a subtle motion during brief silences
+                # instead of flat-lining at the minimum height.
+                level = self._levels[i] if i < len(self._levels) else 0.0
+                shimmer = (math.sin(self._time * 6.0 + p) * 0.5 + 0.5) * 0.12
+                amp = min(1.0, level + shimmer)
+                target = BAR_MIN_HEIGHT + amp * (BAR_MAX_HEIGHT - BAR_MIN_HEIGHT)
             elif self._state == "processing":
                 # Slow pulse
                 target = BAR_MIN_HEIGHT + (

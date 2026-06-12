@@ -11,7 +11,6 @@ build/
 dist/
 *.spec
 !jaspervoice.spec
-
 # IDE
 .idea/
 .vscode/
@@ -26,3 +25,7 @@ desktop.ini
 config.json
 config.json.bak
 history.json
+
+# Non-project scratch (UI prototyping + skill benchmark runs, not part of the app)
+design/
+benchmark/

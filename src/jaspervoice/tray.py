@@ -65,6 +65,7 @@ class TrayController(QObject):
     language_changed = Signal(str)
     settings_requested = Signal()
     stats_requested = Signal()
+    update_check_requested = Signal()
 
     def __init__(self, app: QApplication, cfg: Optional[dict] = None, on_open_config: Optional[Callable[[], None]] = None):
         super().__init__()
@@ -133,6 +134,9 @@ class TrayController(QObject):
         stats_act = QAction("Statistics...", self._menu)
         stats_act.triggered.connect(self.stats_requested.emit)
         self._menu.addAction(stats_act)
+        check_updates_act = QAction("Check for updates...", self._menu)
+        check_updates_act.triggered.connect(self.update_check_requested.emit)
+        self._menu.addAction(check_updates_act)
         self._menu.addSeparator()
         quit_act = QAction("Quit", self._menu)
         quit_act.triggered.connect(self.quit_requested.emit)

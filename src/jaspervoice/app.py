@@ -36,6 +36,7 @@ from .postprocessing import (
     NoopPostProcessor,
     OpenCodePostProcessor,
 )
+from .single_instance import SingleInstance
 from .theme import apply_theme
 from .transcription import Transcriber, TranscriberError
 from .tray import TrayController
@@ -187,6 +188,13 @@ class App(QObject):
         self._recording_start: Optional[float] = None
         self._last_duration_s: float = 0.0
         self._stats_window = None
+        # Hold the single-instance mutex for the process lifetime. Acquired in
+        # run(); kept as an attribute so the OS keeps the kernel object alive
+        # until we exit.
+        self._instance_guard: Optional["SingleInstance"] = None
+        # Background startup update-check thread/worker (created lazily).
+        self._startup_check_thread: Optional[QThread] = None
+        self._startup_check_worker: Optional[QObject] = None
 
     def _set_state(self, state: str) -> None:
         """Mirror a state to both tray and overlay."""
@@ -337,6 +345,7 @@ class App(QObject):
         self._tray.language_changed.connect(self._on_language_changed)
         self._tray.settings_requested.connect(self._show_settings)
         self._tray.stats_requested.connect(self._show_stats)
+        self._tray.update_check_requested.connect(self._check_for_updates)
 
         # Settings window (constructed before overlay so overlay can connect
         # to it for the "Settings..." context menu).
@@ -400,6 +409,38 @@ class App(QObject):
         # a custom handler from the main thread can cause reentrant shutdown
         # issues if it fires while the event loop is mid-tear-down.
 
+    def _startup_update_check(self) -> None:
+        """Background, failure-safe update check. Notifies via tray only if an
+        update is available; never opens a window or blocks the UI."""
+        try:
+            from .ui import _CheckWorker
+        except Exception:
+            return
+        repo = str(self._cfg.get("update_repo") or "")
+        thread = QThread()
+        worker = _CheckWorker(repo)
+        worker.moveToThread(thread)
+        # Keep references so they aren't garbage-collected mid-run.
+        self._startup_check_thread = thread
+        self._startup_check_worker = worker
+
+        def _done(info) -> None:
+            thread.quit()
+            if info is not None and self._tray is not None:
+                self._tray.show_message(
+                    "JasperVoice update available",
+                    f"Version {info.version} is ready. Open the tray → "
+                    "Check for updates to install.",
+                )
+
+        def _error(_msg: str) -> None:
+            thread.quit()  # soft-fail: stay quiet, app keeps running
+
+        thread.started.connect(worker.run)
+        worker.done.connect(_done, Qt.ConnectionType.QueuedConnection)
+        worker.error.connect(_error, Qt.ConnectionType.QueuedConnection)
+        thread.start()
+
     def _on_language_changed(self, code: str) -> None:
         self._transcriber.set_language(code)
         self._cfg["language"] = code
@@ -421,6 +462,20 @@ class App(QObject):
         self._stats_window.show()
         self._stats_window.raise_()
         self._stats_window.activateWindow()
+
+    # ----- Updates -----
+    def _check_for_updates(self) -> None:
+        """Manual update check from the tray. Fully failure-safe: any error is
+        shown as a tray message and the app keeps running normally."""
+        from .ui import UpdateDialog
+
+        repo = str(self._cfg.get("update_repo") or "")
+        dlg = UpdateDialog(repo=repo, parent=self._settings)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        # Keep a reference so it isn't garbage-collected while open.
+        self._update_dialog = dlg
 
     def _on_config_changed(self, new_cfg: dict) -> None:
         """Apply a new config live. Hotkey listener is restarted; transcriber
@@ -519,6 +574,14 @@ class App(QObject):
         except Exception:
             pass
         try:
+            if self._startup_check_thread is not None:
+                self._startup_check_thread.quit()
+                self._startup_check_thread.wait(2000)
+                self._startup_check_thread = None
+                self._startup_check_worker = None
+        except Exception:
+            pass
+        try:
             if self._overlay is not None:
                 self._overlay.hide()
                 self._overlay.deleteLater()
@@ -555,11 +618,50 @@ class App(QObject):
             self._qt.quit()
 
     def run(self) -> int:
+        # Single-instance guard: a second process would fight over the global
+        # hotkey. If another instance already holds the mutex, surface a brief
+        # tray notification (if possible) and exit cleanly.
+        self._instance_guard = SingleInstance()
+        if not self._instance_guard.acquire():
+            log.warning("Another JasperVoice instance is already running; exiting.")
+            try:
+                self._notify_already_running()
+            except Exception:
+                pass
+            return 0
         self.setup()
         log.info("JasperVoice running. Hotkey: %s", self._cfg["hotkey"])
+        # Optional, non-blocking update check shortly after startup. Scheduled
+        # here (not in setup()) so test harnesses that call setup() directly
+        # never trigger a network check. Any failure is swallowed; it only
+        # surfaces a tray notice when an update is actually available.
+        if self._cfg.get("update_check_enabled", True):
+            QTimer.singleShot(4000, self._startup_update_check)
         rc = self._qt.exec() if self._qt is not None else 1
         self._shutdown()
         return rc
+
+    def _notify_already_running(self) -> None:
+        """Best-effort balloon when a duplicate launch is blocked."""
+        qt = QApplication.instance() or QApplication(sys.argv)
+        from PySide6.QtWidgets import QSystemTrayIcon
+        from PySide6.QtGui import QIcon
+
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        from .assets import icon_path
+
+        icon_file = icon_path()
+        tray = QSystemTrayIcon(QIcon(icon_file) if icon_file else QIcon())
+        tray.show()
+        if tray.supportsMessages():
+            tray.showMessage(
+                "JasperVoice",
+                "JasperVoice is already running (check the system tray).",
+                QSystemTrayIcon.Information,
+                3000,
+            )
+            qt.processEvents()
 
 
 def main() -> int:
