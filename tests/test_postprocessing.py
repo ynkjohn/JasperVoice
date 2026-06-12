@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import urllib.error
 
 import pytest
 
@@ -13,6 +14,7 @@ from jaspervoice.postprocessing import (
     DEFAULT_OUTPUT_MODE,
     PROMPTS,
     _build_url,
+    is_valid_env_var_name,
 )
 
 
@@ -404,6 +406,52 @@ def test_fetch_available_models_no_key_omits_auth(monkeypatch):
 
     fetch_available_models("http://x", api_key_env="NOPE_KEY", request_fn=fake_get)
     assert "Authorization" not in seen
+
+
+def test_fetch_available_models_env_name_validation():
+    assert is_valid_env_var_name("OPENCODE_API_KEY")
+    assert is_valid_env_var_name("OPENROUTER_API_KEY")
+    assert not is_valid_env_var_name("sk-" + "a" * 48)
+    assert not is_valid_env_var_name("ghp_" + "a" * 36)
+
+
+def test_fetch_available_models_403_without_env_var_explains_auth(monkeypatch):
+    from jaspervoice.postprocessing import fetch_available_models
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+
+    def fake_get(url, headers, timeout):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
+
+    with pytest.raises(PostProcessorError) as exc_info:
+        fetch_available_models(
+            "https://api.example.com",
+            api_key_env="OPENCODE_API_KEY",
+            request_fn=fake_get,
+        )
+    msg = str(exc_info.value)
+    assert "403" in msg
+    assert "OPENCODE_API_KEY" in msg
+    assert "restart" in msg
+
+
+def test_fetch_available_models_403_raw_key_does_not_leak_secret():
+    from jaspervoice.postprocessing import fetch_available_models
+
+    secret = "sk-" + "a" * 48
+
+    def fake_get(url, headers, timeout):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
+
+    with pytest.raises(PostProcessorError) as exc_info:
+        fetch_available_models(
+            "https://api.example.com",
+            api_key_env=secret,
+            request_fn=fake_get,
+        )
+    msg = str(exc_info.value)
+    assert secret not in msg
+    assert "not the key itself" in msg
 
 
 def test_fetch_available_models_empty_endpoint_raises():

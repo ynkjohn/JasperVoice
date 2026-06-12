@@ -9,11 +9,12 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import re
 import time
 import urllib.request as _urllib
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
-from urllib.error import URLError as _URLError
+from urllib.error import HTTPError as _HTTPError, URLError as _URLError
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +23,9 @@ DEFAULT_OUTPUT_MODE = "raw"
 
 FAST_MODES = {"clean", "prompt", "commit", "command"}
 SMART_MODES = {"docs"}
+
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SECRET_VALUE_RE = re.compile(r"^(sk-|sk-proj-|gh[pousr]_|xox[baprs]-|AIza)")
 
 PROMPTS: dict[str, str] = {
     "clean": (
@@ -50,6 +54,37 @@ PROMPTS: dict[str, str] = {
 
 
 RequestFn = Callable[[str, bytes, dict[str, str], int], bytes]
+
+
+def is_valid_env_var_name(value: object) -> bool:
+    """True when value is a plain environment-variable name, not a secret."""
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return bool(_ENV_VAR_NAME_RE.fullmatch(stripped)) and not _SECRET_VALUE_RE.match(stripped)
+
+
+def _model_fetch_http_error(code: int, reason: str, api_key_env: str, has_key: bool) -> str:
+    status = f"HTTP {code}" + (f" {reason}" if reason else "")
+    if code not in (401, 403):
+        return f"HTTP request failed: {status}"
+    if not is_valid_env_var_name(api_key_env):
+        auth_hint = (
+            "The API key field must contain an environment-variable name, not the key itself. "
+            "Use a name like OPENCODE_API_KEY, set that variable outside JasperVoice, "
+            "then restart the app."
+        )
+    elif has_key:
+        auth_hint = (
+            f"The key loaded from {api_key_env.strip()} was rejected by the provider. "
+            "Check that the key is valid and allowed to list models."
+        )
+    else:
+        auth_hint = (
+            f"No value is set for {api_key_env.strip()} in this JasperVoice process. "
+            "Set the environment variable outside JasperVoice, then restart the app."
+        )
+    return f"Model list request was rejected ({status}). {auth_hint}"
 
 
 @dataclass
@@ -132,8 +167,8 @@ def fetch_available_models(
     if not base_url.strip():
         raise PostProcessorError("Endpoint is empty. Fill in the provider base URL first.")
 
-    headers = {"Accept": "application/json"}
-    api_key = os.environ.get(api_key_env or "")
+    headers = {"Accept": "application/json", "User-Agent": "JasperVoice"}
+    api_key = os.environ.get(api_key_env.strip()) if is_valid_env_var_name(api_key_env) else None
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
@@ -142,6 +177,10 @@ def fetch_available_models(
         try:
             with _urllib.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
+        except _HTTPError as e:
+            raise PostProcessorError(
+                _model_fetch_http_error(e.code, str(e.reason or ""), api_key_env, bool(api_key))
+            ) from e
         except _URLError as e:
             raise PostProcessorError(f"HTTP request failed: {e}") from e
 
@@ -150,6 +189,10 @@ def fetch_available_models(
         raw = (request_fn or _default_get)(url, headers, timeout_s)
     except PostProcessorError:
         raise
+    except _HTTPError as e:
+        raise PostProcessorError(
+            _model_fetch_http_error(e.code, str(e.reason or ""), api_key_env, bool(api_key))
+        ) from e
     except Exception as e:
         raise PostProcessorError(f"Could not reach {url}: {e}") from e
 
@@ -241,7 +284,7 @@ class OpenCodePostProcessor(PostProcessor):
         headers = {
             "Content-Type": "application/json",
         }
-        api_key = os.environ.get(self._api_key_env or "")
+        api_key = os.environ.get(self._api_key_env.strip()) if is_valid_env_var_name(self._api_key_env) else None
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 

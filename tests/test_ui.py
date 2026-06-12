@@ -318,6 +318,11 @@ def test_polish_api_key_env_blank_falls_back(window):
     assert window._collect_values()["opencode_api_key_env"] == DEFAULT_CONFIG["opencode_api_key_env"]
 
 
+def test_polish_raw_api_key_env_falls_back(window):
+    window.page("polish").api_key_env.setText("sk-" + "a" * 48)
+    assert window._collect_values()["opencode_api_key_env"] == DEFAULT_CONFIG["opencode_api_key_env"]
+
+
 def test_polish_apply_fetched_models_fills_both_combos(window):
     page = window.page("polish")
     page.fast_model.setEditText("already-typed")
@@ -337,6 +342,15 @@ def test_polish_fetch_requires_endpoint(window):
     page._fetch_models()
     assert "endpoint" in page.fetch_status.text().lower()
     assert page._thread is None  # no worker started
+
+
+def test_polish_fetch_rejects_raw_api_key_env(window):
+    page = window.page("polish")
+    page.base_url.setText("https://api.example.com/v1")
+    page.api_key_env.setText("sk-" + "a" * 48)
+    page._fetch_models()
+    assert "not the key itself" in page.fetch_status.text()
+    assert page._thread is None
 
 
 def test_polish_fetch_error_reenables_button(window):

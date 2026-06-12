@@ -10,7 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from .postprocessing import OUTPUT_MODES
+from .postprocessing import OUTPUT_MODES, is_valid_env_var_name
 
 log = logging.getLogger(__name__)
 
@@ -138,9 +138,11 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(out.get("opencode_base_url"), str):
         log.warning("Invalid opencode_base_url %r, falling back to ''", out.get("opencode_base_url"))
         out["opencode_base_url"] = ""
-    if not isinstance(out.get("opencode_api_key_env"), str) or not out["opencode_api_key_env"].strip():
-        log.warning("Invalid opencode_api_key_env %r, falling back to 'OPENCODE_API_KEY'", out.get("opencode_api_key_env"))
+    if not is_valid_env_var_name(out.get("opencode_api_key_env")):
+        log.warning("Invalid opencode_api_key_env, falling back to 'OPENCODE_API_KEY'")
         out["opencode_api_key_env"] = "OPENCODE_API_KEY"
+    else:
+        out["opencode_api_key_env"] = out["opencode_api_key_env"].strip()
     if not isinstance(out.get("opencode_fast_model"), str) or not out["opencode_fast_model"].strip():
         log.warning("Invalid opencode_fast_model %r, falling back to default", out.get("opencode_fast_model"))
         out["opencode_fast_model"] = DEFAULT_CONFIG["opencode_fast_model"]

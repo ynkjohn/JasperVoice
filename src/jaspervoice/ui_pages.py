@@ -61,7 +61,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from . import config as cfg_mod
 from .config import DEFAULT_CONFIG, get_app_dir, get_models_dir
-from .postprocessing import OUTPUT_MODES
+from .postprocessing import OUTPUT_MODES, is_valid_env_var_name
 from .theme import COLORS
 from .ui_widgets import (
     LANGUAGES,
@@ -1374,11 +1374,12 @@ class PolishPage(BasePage):
                   "Base URL of the API. With or without the trailing /v1 — both work.")
         self.api_key_env = QLineEdit()
         self.api_key_env.setMinimumWidth(320)
+        self.api_key_env.setPlaceholderText("OPENCODE_API_KEY")
         self.api_key_env.textChanged.connect(dirty)
-        g.add_row("API key", self.api_key_env,
-                  "Name of the environment variable that holds your key (e.g. OPENROUTER_API_KEY). "
-                  "The key itself is never written to config.json. Local servers can leave the "
-                  "variable unset.")
+        g.add_row("API key env var", self.api_key_env,
+                  "Enter the environment-variable name, not the key itself (e.g. OPENCODE_API_KEY). "
+                  "Set the variable outside JasperVoice and restart the app. Local servers can "
+                  "leave the variable unset.")
 
         g = self.add_group("MODELS")
         fetch_row = QWidget()
@@ -1459,6 +1460,11 @@ class PolishPage(BasePage):
             self.fetch_status.setText("Fill in the endpoint first.")
             return
         key_env = self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
+        if not is_valid_env_var_name(key_env):
+            self.fetch_status.setText(
+                "API key env var must be a variable name like OPENCODE_API_KEY, not the key itself."
+            )
+            return
         timeout = int(self.timeout_spin.value())
         self.fetch_btn.setEnabled(False)
         self.fetch_status.setText("Fetching model list…")
@@ -1541,8 +1547,9 @@ class PolishPage(BasePage):
         cfg["post_processing_enabled"] = enabled
         cfg["post_processing_provider"] = provider
         cfg["opencode_base_url"] = self.base_url.text().strip()
+        key_env = self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
         cfg["opencode_api_key_env"] = (
-            self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
+            key_env if is_valid_env_var_name(key_env) else DEFAULT_CONFIG["opencode_api_key_env"]
         )
         cfg["opencode_fast_model"] = (
             self.fast_model.currentText().strip() or DEFAULT_CONFIG["opencode_fast_model"]

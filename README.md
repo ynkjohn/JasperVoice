@@ -177,10 +177,11 @@ enabled.
 
 Optionally refine dictation with **any OpenAI-compatible API** after Whisper —
 local (Ollama, LM Studio, vLLM) or remote (OpenRouter, OpenCode, cloud). The
-**AI Polish** page configures everything: provider, endpoint, API key (as an
-environment-variable name — the key itself is never stored), output style, and
-a **Fetch models** button that queries the provider's `/v1/models` list so you
-can pick a Fast and a Smart model. The equivalent `config.json` keys:
+**AI Polish** page configures everything: provider, endpoint, API key env-var
+name, output style, and a **Fetch models** button that queries the provider's
+`/v1/models` list so you can pick a Fast and a Smart model. Put a variable name
+such as `OPENCODE_API_KEY` in the app, not the raw `sk-...` key; the key itself
+is never stored. The equivalent `config.json` keys:
 
 ```json
 {
@@ -195,7 +196,9 @@ can pick a Fast and a Smart model. The equivalent `config.json` keys:
 }
 ```
 
-Set `OPENCODE_API_KEY` in your environment. Only the transcribed text is sent — never audio. The dictionary runs first, so corrected terms reach the API.
+Set `OPENCODE_API_KEY` in your environment and restart JasperVoice so the
+process can see it. Only the transcribed text is sent — never audio. The
+dictionary runs first, so corrected terms reach the API.
 
 ## GPU acceleration
 

@@ -247,6 +247,18 @@ def test_opencode_api_key_env_empty_falls_back(tmp_path, monkeypatch):
     assert cfg["opencode_api_key_env"] == "OPENCODE_API_KEY"
 
 
+def test_opencode_api_key_env_raw_key_falls_back_without_logging_secret(
+    tmp_path, monkeypatch, caplog,
+):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    secret = "sk-" + "a" * 48
+    p = get_config_path()
+    p.write_text(json.dumps({"opencode_api_key_env": secret}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg["opencode_api_key_env"] == "OPENCODE_API_KEY"
+    assert secret not in caplog.text
+
+
 def test_opencode_fast_model_empty_falls_back(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     p = get_config_path()
