@@ -357,18 +357,25 @@ def launch_installer(installer: str | Path, silent: bool = False) -> None:
     and (with our flag) relaunch it. The caller should quit the app shortly
     after invoking this so the installer can replace locked files.
 
-    ``silent``: pass Inno's ``/SILENT`` for an unattended in-app update. The
-    interactive (wizard) mode is the default for first installs and for the
-    "download then run" button.
+    ``silent``: pass Inno's ``/VERYSILENT`` for an unattended in-app update. The
+    interactive (wizard) mode is the default for first installs and the offline
+    "install from file" button.
     """
     installer = str(installer)
     if not os.path.isfile(installer):
         raise UpdateError(f"Installer missing at launch time: {installer}")
     args = [installer]
     if silent:
-        # /SILENT shows a progress bar but no wizard pages; /NORESTART avoids a
-        # surprise reboot prompt; RestartApplications relaunches us after.
-        args += ["/SILENT", "/NORESTART", "/RestartApplications"]
+        # /VERYSILENT hides the installer UI completely; the custom flag lets
+        # our installer relaunch JasperVoice after a silent in-app update.
+        args += [
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/CloseApplications",
+            "/RestartApplications",
+            "/JasperVoiceAutoLaunch",
+        ]
     try:
         # Detached so the installer outlives this process when we quit. On
         # Windows, DETACHED_PROCESS + no wait lets the wizard run independently.

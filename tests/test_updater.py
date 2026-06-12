@@ -256,4 +256,23 @@ def test_launch_installer_invokes_popen(monkeypatch, tmp_path):
     monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
     updater.launch_installer(p, silent=True)
     assert calls["args"][0] == str(p)
-    assert "/SILENT" in calls["args"]
+    assert "/VERYSILENT" in calls["args"]
+    assert "/SUPPRESSMSGBOXES" in calls["args"]
+    assert "/NORESTART" in calls["args"]
+    assert "/CloseApplications" in calls["args"]
+    assert "/RestartApplications" in calls["args"]
+    assert "/JasperVoiceAutoLaunch" in calls["args"]
+
+
+def test_launch_installer_interactive_has_no_silent_flags(monkeypatch, tmp_path):
+    p = tmp_path / "Setup.exe"
+    p.write_bytes(b"x")
+    calls = {}
+
+    def fake_popen(args, **kwargs):
+        calls["args"] = args
+        return object()
+
+    monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+    updater.launch_installer(p, silent=False)
+    assert calls["args"] == [str(p)]

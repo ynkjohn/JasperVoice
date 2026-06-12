@@ -11,6 +11,9 @@
 ;   * AppMutex matches single_instance.MUTEX_NAME so the installer can detect a
 ;     running JasperVoice and close it (CloseApplications) before replacing the
 ;     locked _internal\ files during an update.
+;   * In-app updates run this installer with /VERYSILENT plus
+;     /JasperVoiceAutoLaunch. That path must not show the wizard and must relaunch
+;     JasperVoice after replacing files.
 ;   * The one-folder bundle is copied wholesale; JasperVoice.exe MUST stay next
 ;     to its _internal\ folder, which {app} guarantees.
 ;   * No services, no registry beyond uninstall + per-user Run (optional). No
@@ -90,8 +93,31 @@ Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: startu
 [Run]
 ; Offer to launch right after install / update. nowait so the wizard closes.
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; Silent in-app updater path: no wizard, but relaunch the updated app.
+Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: IsAutoUpdateLaunch
 
 [UninstallDelete]
 ; Remove staged update installers we downloaded; leave config/history/models
 ; alone so a reinstall keeps the user's settings and downloaded model.
 Type: filesandordirs; Name: "{userappdata}\{#AppName}\updates"
+
+[Code]
+function HasCommandLineParam(Name: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+  begin
+    if CompareText(ParamStr(I), Name) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+function IsAutoUpdateLaunch: Boolean;
+begin
+  Result := WizardSilent and HasCommandLineParam('/JasperVoiceAutoLaunch');
+end;

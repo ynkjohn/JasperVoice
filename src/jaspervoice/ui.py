@@ -681,7 +681,7 @@ class UpdateDialog(QMainWindow):
         notes = (info.notes or "").strip()
         if notes:
             self._notes.setText(notes[:600] + ("…" if len(notes) > 600 else ""))
-        self._action_btn.setText("Download && Install")
+        self._action_btn.setText("Download && Update")
         self._action_btn.setEnabled(bool(info.sha256))
         if not info.sha256:
             self._status.setText(
@@ -739,10 +739,10 @@ class UpdateDialog(QMainWindow):
         self._installer_path = path
         self._progress.setValue(100)
         self._status.setText(
-            "Downloaded and verified. Click Install to update — JasperVoice will "
-            "close, update, and relaunch."
+            "Downloaded and verified. Click Update now — JasperVoice will close, "
+            "update silently, and relaunch."
         )
-        self._action_btn.setText("Install")
+        self._action_btn.setText("Update now")
         self._action_btn.setEnabled(True)
 
     def _on_download_error(self, msg: str) -> None:
@@ -758,7 +758,7 @@ class UpdateDialog(QMainWindow):
         from . import updater
 
         try:
-            updater.launch_installer(self._installer_path, silent=False)
+            updater.launch_installer(self._installer_path, silent=True)
         except updater.UpdateError as e:
             QMessageBox.warning(self, "JasperVoice", f"Could not launch installer:\n{e}")
             return
