@@ -363,6 +363,16 @@ def test_polish_fetch_error_reenables_button(window):
 
 # --- Model & Engine page ---
 
+def _make_model_cache(root, size="small"):
+    target = root / f"models--Systran--faster-whisper-{size}"
+    snap = target / "snapshots" / "abc123"
+    snap.mkdir(parents=True)
+    for name in ("config.json", "tokenizer.json", "vocabulary.txt"):
+        (snap / name).write_text("{}", encoding="utf-8")
+    (snap / "model.bin").write_bytes(b"model")
+    return target
+
+
 def test_model_hardware_recommendation_cuda(window):
     page = window.page("model")
     page._apply_hardware({"cuda_devices": 1})
@@ -386,18 +396,40 @@ def test_model_actions_reflect_installed_state(window, appdata):
     assert page.download_btn.isEnabled()
     assert not page.delete_btn.isEnabled()
     # Create a fake local cache for "small"
-    (get_models_dir() / "models--Systran--faster-whisper-small").mkdir(parents=True)
+    _make_model_cache(get_models_dir(), "small")
     page._refresh_card_states()
     assert not page.download_btn.isEnabled()
     assert page.delete_btn.isEnabled()
     assert "installed" in page.model_status.text()
 
 
+def test_model_broken_cache_can_be_removed(window, appdata, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from jaspervoice.config import get_models_dir
+    root = get_models_dir()
+    target = root / "models--Systran--faster-whisper-small"
+    (target / "snapshots" / "abc123").mkdir(parents=True)
+    lock_dir = root / ".locks" / "models--Systran--faster-whisper-small"
+    lock_dir.mkdir(parents=True)
+    page = window.page("model")
+    page.select_model("small")
+    page._refresh_card_states()
+    assert page.download_btn.isEnabled()
+    assert page.delete_btn.isEnabled()
+    assert "incomplete" in page.model_status.text()
+    monkeypatch.setattr(
+        "jaspervoice.ui_pages.QMessageBox.question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+    )
+    page._delete_selected()
+    assert not target.exists()
+    assert not lock_dir.exists()
+
+
 def test_model_delete_removes_cache_dir(window, appdata, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     from jaspervoice.config import get_models_dir
-    target = get_models_dir() / "models--Systran--faster-whisper-small"
-    (target / "snapshots").mkdir(parents=True)
+    target = _make_model_cache(get_models_dir(), "small")
     page = window.page("model")
     page.select_model("small")
     monkeypatch.setattr(
@@ -411,8 +443,7 @@ def test_model_delete_removes_cache_dir(window, appdata, monkeypatch):
 def test_model_delete_declined_keeps_dir(window, appdata, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     from jaspervoice.config import get_models_dir
-    target = get_models_dir() / "models--Systran--faster-whisper-small"
-    target.mkdir(parents=True)
+    target = _make_model_cache(get_models_dir(), "small")
     page = window.page("model")
     page.select_model("small")
     monkeypatch.setattr(

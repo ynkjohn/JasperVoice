@@ -64,10 +64,10 @@ def is_valid_env_var_name(value: object) -> bool:
     return bool(_ENV_VAR_NAME_RE.fullmatch(stripped)) and not _SECRET_VALUE_RE.match(stripped)
 
 
-def _model_fetch_http_error(code: int, reason: str, api_key_env: str, has_key: bool) -> str:
+def _provider_http_error(action: str, code: int, reason: str, api_key_env: str, has_key: bool) -> str:
     status = f"HTTP {code}" + (f" {reason}" if reason else "")
     if code not in (401, 403):
-        return f"HTTP request failed: {status}"
+        return f"{action} failed: {status}"
     if not is_valid_env_var_name(api_key_env):
         auth_hint = (
             "The API key field must contain an environment-variable name, not the key itself. "
@@ -84,7 +84,15 @@ def _model_fetch_http_error(code: int, reason: str, api_key_env: str, has_key: b
             f"No value is set for {api_key_env.strip()} in this JasperVoice process. "
             "Set the environment variable outside JasperVoice, then restart the app."
         )
-    return f"Model list request was rejected ({status}). {auth_hint}"
+    return f"{action} was rejected ({status}). {auth_hint}"
+
+
+def _model_fetch_http_error(code: int, reason: str, api_key_env: str, has_key: bool) -> str:
+    return _provider_http_error("Model list request", code, reason, api_key_env, has_key)
+
+
+def _api_call_http_error(code: int, reason: str, api_key_env: str, has_key: bool) -> str:
+    return _provider_http_error("AI Polish request", code, reason, api_key_env, has_key)
 
 
 @dataclass
@@ -222,6 +230,8 @@ def _make_request(url: str, body: bytes, headers: dict[str, str], timeout_s: int
     try:
         with _urllib.urlopen(req, timeout=timeout_s) as resp:
             return resp.read()
+    except _HTTPError:
+        raise
     except _URLError as e:
         raise PostProcessorError(f"HTTP request failed: {e}") from e
 
@@ -291,6 +301,10 @@ class OpenCodePostProcessor(PostProcessor):
         url = _build_url(self._base_url)
         try:
             resp_bytes = self._request_fn(url, body, headers, self._timeout_s)
+        except _HTTPError as e:
+            raise PostProcessorError(
+                _api_call_http_error(e.code, str(e.reason or ""), self._api_key_env, bool(api_key))
+            ) from e
         except PostProcessorError:
             raise
         except Exception as e:

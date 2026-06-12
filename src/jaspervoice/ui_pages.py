@@ -28,9 +28,11 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
@@ -139,8 +141,15 @@ def _dir_size(path) -> int:
     return total
 
 
+def _model_cache_name(size: str) -> str:
+    return f"models--Systran--faster-whisper-{size}"
+
+
 def model_dir_for(size: str):
     """Local cache directory for a faster-whisper model size, or None."""
+    expected = get_models_dir() / _model_cache_name(size)
+    if expected.is_dir():
+        return expected
     try:
         needle = f"faster-whisper-{size}".lower()
         for child in get_models_dir().iterdir():
@@ -151,9 +160,66 @@ def model_dir_for(size: str):
     return None
 
 
+def _model_lock_dir_for(size: str):
+    path = get_models_dir() / ".locks" / _model_cache_name(size)
+    return path if path.exists() else None
+
+
+def _snapshot_has_required_files(snapshot) -> bool:
+    try:
+        required = ("config.json", "model.bin", "tokenizer.json")
+        if not all((snapshot / name).is_file() for name in required):
+            return False
+        model_file = snapshot / "model.bin"
+        if model_file.stat().st_size <= 0:
+            return False
+        return (snapshot / "vocabulary.txt").is_file() or (snapshot / "vocabulary.json").is_file()
+    except OSError:
+        return False
+
+
+def model_cache_state(size: str) -> tuple[str, Path | None]:
+    """Return ('missing'|'installed'|'broken', cache_dir)."""
+    cache_dir = model_dir_for(size)
+    if cache_dir is None:
+        return "missing", None
+    snapshots = cache_dir / "snapshots"
+    try:
+        if snapshots.is_dir() and any(
+            child.is_dir() and _snapshot_has_required_files(child)
+            for child in snapshots.iterdir()
+        ):
+            return "installed", cache_dir
+    except OSError:
+        pass
+    return "broken", cache_dir
+
+
 def model_installed(size: str) -> bool:
     """True if the faster-whisper model cache for `size` exists locally."""
-    return model_dir_for(size) is not None
+    state, _path = model_cache_state(size)
+    return state == "installed"
+
+
+def _on_rm_error(func, path, _exc_info) -> None:
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        raise
+
+
+def remove_model_cache(size: str) -> list[str]:
+    """Remove model cache and matching HuggingFace lock dir. Returns removed paths."""
+    removed: list[str] = []
+    paths = [p for p in (model_dir_for(size), _model_lock_dir_for(size)) if p is not None]
+    for path in paths:
+        if path.is_dir():
+            shutil.rmtree(path, onerror=_on_rm_error)
+        elif path.exists():
+            path.unlink()
+        removed.append(str(path))
+    return removed
 
 
 def download_whisper_model(size: str) -> str:
@@ -1162,25 +1228,36 @@ class ModelPage(BasePage):
     def _refresh_card_states(self) -> None:
         active = self.shell.saved_cfg.get("model_size")
         for key, card in self.model_cards.items():
-            if key == active:
+            state, _path = model_cache_state(key)
+            if key == active and state == "broken":
+                card.set_state_text("ACTIVE · BROKEN CACHE", emphasized=True)
+            elif key == active:
                 card.set_state_text("ACTIVE", emphasized=True)
-            elif model_installed(key):
+            elif state == "installed":
                 card.set_state_text("INSTALLED")
+            elif state == "broken":
+                card.set_state_text("BROKEN CACHE")
             else:
                 card.set_state_text("DOWNLOADS ON FIRST USE")
         self._refresh_model_actions()
 
     def _refresh_model_actions(self) -> None:
         key = self.selected_model()
-        installed = model_installed(key)
+        state, _path = model_cache_state(key)
         if self._busy:
             return  # the busy flow owns button/label state
-        self.download_btn.setEnabled(not installed)
-        self.delete_btn.setEnabled(installed)
-        self.model_status.setText(
-            f"{key} is installed locally." if installed
-            else f"{key} is not on disk yet — download it now or let it fetch on first use."
-        )
+        self.download_btn.setEnabled(state != "installed")
+        self.delete_btn.setEnabled(state in {"installed", "broken"})
+        if state == "installed":
+            self.model_status.setText(f"{key} is installed locally.")
+        elif state == "broken":
+            self.model_status.setText(
+                f"{key} has an incomplete local cache — remove it or download again."
+            )
+        else:
+            self.model_status.setText(
+                f"{key} is not on disk yet — download it now or let it fetch on first use."
+            )
 
     def selected_model(self) -> str:
         for key, card in self.model_cards.items():
@@ -1279,7 +1356,7 @@ class ModelPage(BasePage):
         if self._busy:
             return
         key = self.selected_model()
-        target = model_dir_for(key)
+        state, target = model_cache_state(key)
         if target is None:
             self.shell.toast(f"{key} is not installed")
             return
@@ -1288,17 +1365,22 @@ class ModelPage(BasePage):
             "\n\nThis is the active model — it will download again on next use."
             if key == active else ""
         )
+        if state == "broken":
+            extra += "\n\nThis cache is incomplete and should be removed before downloading again."
         confirm = QMessageBox.question(
             self, "JasperVoice",
-            f"Remove the {key} model from disk?\n{target}{extra}",
+            f"Remove the {key} model cache from disk?\n{target}{extra}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
         try:
-            shutil.rmtree(target)
+            removed = remove_model_cache(key)
         except OSError as e:
             QMessageBox.warning(self, "JasperVoice", f"Could not remove the model:\n{e}")
+            return
+        if not removed:
+            self.shell.toast(f"{key} is not installed")
             return
         self._refresh_card_states()
         self.shell.toast(f"Model {key} removed from disk")

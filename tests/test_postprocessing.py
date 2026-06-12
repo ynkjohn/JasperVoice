@@ -271,6 +271,38 @@ def test_opencode_http_error_raises():
             pp.process("hello", mode="clean")
 
 
+def test_opencode_403_without_env_var_explains_auth(monkeypatch):
+    def fake_request(url, body, headers, timeout_s):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    pp = OpenCodePostProcessor(base_url="https://api.example.com", request_fn=fake_request)
+    with pytest.raises(PostProcessorError) as exc_info:
+        pp.process("hello", mode="clean")
+    msg = str(exc_info.value)
+    assert "403" in msg
+    assert "OPENCODE_API_KEY" in msg
+    assert "restart" in msg
+
+
+def test_opencode_403_raw_key_env_does_not_leak_secret():
+    secret = "sk-" + "a" * 48
+
+    def fake_request(url, body, headers, timeout_s):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
+
+    pp = OpenCodePostProcessor(
+        base_url="https://api.example.com",
+        api_key_env=secret,
+        request_fn=fake_request,
+    )
+    with pytest.raises(PostProcessorError) as exc_info:
+        pp.process("hello", mode="clean")
+    msg = str(exc_info.value)
+    assert secret not in msg
+    assert "not the key itself" in msg
+
+
 def test_opencode_invalid_json_response_raises():
     pp = OpenCodePostProcessor(
         base_url="https://api.example.com",
