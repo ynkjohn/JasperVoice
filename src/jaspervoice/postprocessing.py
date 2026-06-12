@@ -27,6 +27,19 @@ SMART_MODES = {"docs"}
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SECRET_VALUE_RE = re.compile(r"^(sk-|sk-proj-|gh[pousr]_|xox[baprs]-|AIza)")
 
+# Common env var names users tend to have set. The diagnostic checks these to
+# tell the user "you already have OPENAI_API_KEY, just point the field at it"
+# instead of failing with an opaque 403.
+COMMON_API_KEY_ENVS: tuple[str, ...] = (
+    "OPENCODE_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GROQ_API_KEY",
+    "MISTRAL_API_KEY",
+    "GEMINI_API_KEY",
+)
+
 PROMPTS: dict[str, str] = {
     "clean": (
         "You clean up dictated text. Fix punctuation, capitalization, spacing, "
@@ -80,11 +93,34 @@ def _provider_http_error(action: str, code: int, reason: str, api_key_env: str, 
             "Check that the key is valid and allowed to list models."
         )
     else:
+        alt = _detect_alt_api_key_env(api_key_env)
+        alt_hint = (
+            f" Detected a value under '{alt}' — change the API key env var field "
+            f"to '{alt}' to use it."
+            if alt else ""
+        )
         auth_hint = (
             f"No value is set for {api_key_env.strip()} in this JasperVoice process. "
-            "Set the environment variable outside JasperVoice, then restart the app."
+            "Open Settings -> AI Polish and click 'Test' for step-by-step setup. "
+            "For remote APIs: set the env var in Windows (Win+R -> sysdm.cpl -> "
+            "Advanced -> Environment Variables), then close and reopen JasperVoice. "
+            "For local servers (Ollama, LM Studio): leave the field empty."
+            f"{alt_hint}"
         )
     return f"{action} was rejected ({status}). {auth_hint}"
+
+
+def _detect_alt_api_key_env(configured: str) -> Optional[str]:
+    """Return the first COMMON_API_KEY_ENVS name that has a value set,
+    excluding the one the user already configured. Used to nudge users who
+    already have e.g. OPENAI_API_KEY set but typed OPENCODE_API_KEY in the field."""
+    configured = (configured or "").strip()
+    for alt in COMMON_API_KEY_ENVS:
+        if alt == configured:
+            continue
+        if os.environ.get(alt):
+            return alt
+    return None
 
 
 def _model_fetch_http_error(code: int, reason: str, api_key_env: str, has_key: bool) -> str:
@@ -93,6 +129,66 @@ def _model_fetch_http_error(code: int, reason: str, api_key_env: str, has_key: b
 
 def _api_call_http_error(code: int, reason: str, api_key_env: str, has_key: bool) -> str:
     return _provider_http_error("AI Polish request", code, reason, api_key_env, has_key)
+
+
+def diagnose_polish_config(base_url: str, api_key_env: str = "OPENCODE_API_KEY") -> dict:
+    """Inspect the local Polish config without making any network call.
+
+    The result is a plain dict the UI can render verbatim. It tells the user
+    exactly what's missing (or already wired) so they don't have to guess from
+    an opaque 403. Safe to call from the GUI thread.
+    """
+    base_url = (base_url or "").strip()
+    api_key_env = (api_key_env or "").strip() or "OPENCODE_API_KEY"
+
+    result: dict = {
+        "base_url": base_url,
+        "api_key_env": api_key_env,
+        "base_url_set": bool(base_url),
+        "env_var_name_valid": False,
+        "env_var_set": False,
+        "env_var_value_len": 0,
+        "detected_alt_env_var": None,
+        "issues": [],
+    }
+
+    if not base_url:
+        result["issues"].append("Endpoint URL is empty.")
+
+    if not is_valid_env_var_name(api_key_env):
+        result["issues"].append(
+            f"API key env var '{api_key_env}' is not a valid environment-variable name. "
+            "Use a name like OPENCODE_API_KEY, not the key itself."
+        )
+        return result
+
+    result["env_var_name_valid"] = True
+    value = os.environ.get(api_key_env)
+    if value:
+        result["env_var_set"] = True
+        result["env_var_value_len"] = len(value)
+        return result
+
+    for alt in COMMON_API_KEY_ENVS:
+        if alt == api_key_env:
+            continue
+        if os.environ.get(alt):
+            result["detected_alt_env_var"] = alt
+            result["issues"].append(
+                f"'{api_key_env}' is not set, but '{alt}' is set. "
+                f"Change the API key env var field to '{alt}' to use it, "
+                f"or set '{api_key_env}' in Windows and restart JasperVoice."
+            )
+            return result
+
+    result["issues"].append(
+        f"'{api_key_env}' is not set in this JasperVoice process. "
+        "For remote APIs: set it in Windows "
+        "(Win+R -> sysdm.cpl -> Advanced -> Environment Variables), "
+        "then close and reopen JasperVoice. "
+        "For local servers (Ollama, LM Studio): leave the field empty."
+    )
+    return result
 
 
 @dataclass

@@ -1472,7 +1472,16 @@ class PolishPage(BasePage):
         self.fetch_btn.setMinimumWidth(140)
         self.fetch_btn.clicked.connect(self._fetch_models)
         frow.addWidget(self.fetch_btn, 0)
-        self.fetch_status = hint("Fill in the endpoint (and key, if needed), then fetch the provider's model list.")
+        self.test_btn = QPushButton("Test")
+        self.test_btn.setMinimumWidth(80)
+        self.test_btn.setToolTip(
+            "Check endpoint, API key env var, and any auto-detected alternative. "
+            "No network call — runs in milliseconds."
+        )
+        self.test_btn.clicked.connect(self._test_config)
+        frow.addWidget(self.test_btn, 0)
+        self.fetch_status = hint("Click Test to verify the env var, or Fetch models to pull the provider's list.")
+        self.fetch_status.setWordWrap(True)
         frow.addWidget(self.fetch_status, 1)
         g.add_widget(fetch_row)
 
@@ -1533,6 +1542,54 @@ class PolishPage(BasePage):
         self.shell.mark_dirty()
 
     # -- fetch models (background) --
+
+    def _test_config(self) -> None:
+        """Local diagnostic — shows env var / endpoint status without any network call.
+
+        Helps the user answer "why does Polish 403?" without doing a full take.
+        """
+        from .postprocessing import diagnose_polish_config
+
+        base_url = self.base_url.text().strip()
+        key_env = self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
+        diag = diagnose_polish_config(base_url, key_env)
+
+        lines: list[str] = []
+        if diag["base_url_set"]:
+            lines.append(f"Endpoint: {diag['base_url']}")
+        else:
+            lines.append("Endpoint: (empty) — set it above.")
+
+        if diag["env_var_name_valid"]:
+            if diag["env_var_set"]:
+                lines.append(
+                    f"API key: {diag['api_key_env']} is set "
+                    f"({diag['env_var_value_len']} chars). Click Fetch models to verify."
+                )
+            elif diag["detected_alt_env_var"]:
+                lines.append(
+                    f"API key: {diag['api_key_env']} is NOT set, but "
+                    f"{diag['detected_alt_env_var']} IS set. Change the field above to "
+                    f"{diag['detected_alt_env_var']} to use it."
+                )
+            else:
+                lines.append(
+                    f"API key: {diag['api_key_env']} is NOT set in this JasperVoice process."
+                )
+                lines.append(
+                    "  For remote APIs: set it in Windows (Win+R -> sysdm.cpl -> "
+                    "Advanced -> Environment Variables), then close and reopen JasperVoice."
+                )
+                lines.append(
+                    "  For local servers (Ollama, LM Studio): leave the field empty."
+                )
+        else:
+            lines.append(
+                f"API key: '{diag['api_key_env']}' is not a valid env var name."
+            )
+            lines.append("  Use a name like OPENCODE_API_KEY, not the key itself.")
+
+        self.fetch_status.setText("\n".join(lines))
 
     def _fetch_models(self) -> None:
         if self._thread is not None:

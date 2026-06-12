@@ -276,13 +276,16 @@ def test_opencode_403_without_env_var_explains_auth(monkeypatch):
         raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
 
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    for v in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+              "GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
     pp = OpenCodePostProcessor(base_url="https://api.example.com", request_fn=fake_request)
     with pytest.raises(PostProcessorError) as exc_info:
         pp.process("hello", mode="clean")
     msg = str(exc_info.value)
     assert "403" in msg
     assert "OPENCODE_API_KEY" in msg
-    assert "restart" in msg
+    assert "reopen" in msg or "restart" in msg
 
 
 def test_opencode_403_raw_key_env_does_not_leak_secret():
@@ -451,6 +454,9 @@ def test_fetch_available_models_403_without_env_var_explains_auth(monkeypatch):
     from jaspervoice.postprocessing import fetch_available_models
 
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    for v in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+              "GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
 
     def fake_get(url, headers, timeout):
         raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
@@ -464,7 +470,7 @@ def test_fetch_available_models_403_without_env_var_explains_auth(monkeypatch):
     msg = str(exc_info.value)
     assert "403" in msg
     assert "OPENCODE_API_KEY" in msg
-    assert "restart" in msg
+    assert "reopen" in msg or "restart" in msg
 
 
 def test_fetch_available_models_403_raw_key_does_not_leak_secret():
@@ -507,3 +513,123 @@ def test_fetch_available_models_empty_list_raises():
         fetch_available_models(
             "http://x", request_fn=lambda u, h, t: json.dumps({"data": []}).encode()
         )
+
+
+# --- diagnose_polish_config -----------------------------------------------
+
+
+def test_diagnose_polish_config_empty_url():
+    from jaspervoice.postprocessing import diagnose_polish_config
+
+    diag = diagnose_polish_config("", "OPENCODE_API_KEY")
+    assert diag["base_url_set"] is False
+    assert diag["env_var_name_valid"] is True
+    assert any("empty" in i.lower() for i in diag["issues"])
+
+
+def test_diagnose_polish_config_env_var_set(monkeypatch):
+    from jaspervoice.postprocessing import diagnose_polish_config
+
+    monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-1234567890")
+    diag = diagnose_polish_config("https://api.example.com/v1", "OPENCODE_API_KEY")
+    assert diag["base_url_set"] is True
+    assert diag["env_var_name_valid"] is True
+    assert diag["env_var_set"] is True
+    assert diag["env_var_value_len"] == len("sk-test-1234567890")
+    assert diag["detected_alt_env_var"] is None
+    assert diag["issues"] == []
+
+
+def test_diagnose_polish_config_env_var_not_set(monkeypatch):
+    from jaspervoice.postprocessing import diagnose_polish_config
+
+    for v in ("OPENCODE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+              "ANTHROPIC_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    diag = diagnose_polish_config("https://api.example.com/v1", "OPENCODE_API_KEY")
+    assert diag["env_var_set"] is False
+    assert diag["detected_alt_env_var"] is None
+    assert any("not set" in i.lower() for i in diag["issues"])
+
+
+def test_diagnose_polish_config_detects_alt_env_var(monkeypatch):
+    from jaspervoice.postprocessing import diagnose_polish_config
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
+    diag = diagnose_polish_config("https://api.example.com/v1", "OPENCODE_API_KEY")
+    assert diag["env_var_set"] is False
+    assert diag["detected_alt_env_var"] == "OPENAI_API_KEY"
+    assert any("OPENAI_API_KEY" in i for i in diag["issues"])
+
+
+def test_diagnose_polish_config_invalid_env_var_name():
+    from jaspervoice.postprocessing import diagnose_polish_config
+
+    diag = diagnose_polish_config("https://api.example.com/v1", "sk-abc123")
+    assert diag["env_var_name_valid"] is False
+    assert any("not a valid" in i.lower() for i in diag["issues"])
+
+
+def test_diagnose_polish_config_defaults_env_var_name():
+    from jaspervoice.postprocessing import diagnose_polish_config
+
+    diag = diagnose_polish_config("https://api.example.com/v1", "")
+    assert diag["api_key_env"] == "OPENCODE_API_KEY"
+
+
+def test_diagnose_polish_config_no_leak_of_alt_secret(monkeypatch):
+    """The diagnostic must never echo the alt env var's value into issues."""
+    from jaspervoice.postprocessing import diagnose_polish_config
+
+    secret = "sk-supersecretvalue1234567890"
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    diag = diagnose_polish_config("https://api.example.com/v1", "OPENCODE_API_KEY")
+    for issue in diag["issues"]:
+        assert secret not in issue
+
+
+def test_runtime_403_message_suggests_test_button(monkeypatch):
+    """The runtime 403 message must point the user at the AI Polish Test button
+    and mention the local-server escape hatch, so they can self-serve without
+    reading source code."""
+    from jaspervoice.postprocessing import OpenCodePostProcessor
+
+    def fake_request(url, body, headers, timeout_s):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    for v in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+              "GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    pp = OpenCodePostProcessor(
+        base_url="https://api.example.com",
+        request_fn=fake_request,
+    )
+    with pytest.raises(PostProcessorError) as exc_info:
+        pp.process("hello", mode="clean")
+    msg = str(exc_info.value)
+    assert "AI Polish" in msg
+    assert "Settings" in msg and "Test" in msg
+    assert "Ollama" in msg or "LM Studio" in msg
+
+
+def test_runtime_403_message_nudges_detected_alt_env_var(monkeypatch):
+    """If the user has OPENAI_API_KEY but configured OPENCODE_API_KEY, the
+    runtime 403 message should mention OPENAI_API_KEY so they know to switch."""
+    from jaspervoice.postprocessing import OpenCodePostProcessor
+
+    def fake_request(url, body, headers, timeout_s):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-something")
+    pp = OpenCodePostProcessor(
+        base_url="https://api.example.com",
+        request_fn=fake_request,
+    )
+    with pytest.raises(PostProcessorError) as exc_info:
+        pp.process("hello", mode="clean")
+    msg = str(exc_info.value)
+    assert "OPENAI_API_KEY" in msg

@@ -361,6 +361,60 @@ def test_polish_fetch_error_reenables_button(window):
     assert "connection refused" in page.fetch_status.text()
 
 
+def test_polish_test_button_reports_env_var_set(window, monkeypatch):
+    page = window.page("polish")
+    page.base_url.setText("https://api.example.com/v1")
+    page.api_key_env.setText("OPENCODE_API_KEY")
+    monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-1234567890")
+    page._test_config()
+    text = page.fetch_status.text()
+    assert "set" in text.lower()
+    assert "18 chars" in text
+
+
+def test_polish_test_button_reports_env_var_missing(window, monkeypatch):
+    page = window.page("polish")
+    page.base_url.setText("https://api.example.com/v1")
+    page.api_key_env.setText("OPENCODE_API_KEY")
+    for v in ("OPENCODE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+              "ANTHROPIC_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    page._test_config()
+    text = page.fetch_status.text()
+    assert "not set" in text.lower()
+    assert "Windows" in text or "Environment" in text
+
+
+def test_polish_test_button_detects_alt_env_var(window, monkeypatch):
+    page = window.page("polish")
+    page.base_url.setText("https://api.example.com/v1")
+    page.api_key_env.setText("OPENCODE_API_KEY")
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    page._test_config()
+    text = page.fetch_status.text()
+    assert "OPENAI_API_KEY" in text
+    assert "IS set" in text or "is set" in text
+
+
+def test_polish_test_button_rejects_raw_key(window):
+    page = window.page("polish")
+    page.base_url.setText("https://api.example.com/v1")
+    page.api_key_env.setText("sk-" + "a" * 48)
+    page._test_config()
+    text = page.fetch_status.text()
+    assert "not a valid" in text.lower() or "not the key" in text.lower()
+
+
+def test_polish_test_button_flags_empty_endpoint(window):
+    page = window.page("polish")
+    page.base_url.setText("")
+    page.api_key_env.setText("OPENCODE_API_KEY")
+    page._test_config()
+    text = page.fetch_status.text()
+    assert "empty" in text.lower()
+
+
 # --- Model & Engine page ---
 
 def _make_model_cache(root, size="small"):
