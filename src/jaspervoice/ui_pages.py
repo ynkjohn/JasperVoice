@@ -1355,7 +1355,7 @@ class PolishPage(BasePage):
 
         g = self.add_group("PROVIDER")
         self.enabled = Switch()
-        self.enabled.toggled.connect(dirty)
+        self.enabled.toggled.connect(self._on_enabled_toggled)
         g.add_row("Enable polish", self.enabled,
                   "Runs after transcription, before injection. When off, no network call is ever made.")
         self.provider_combo = QComboBox()
@@ -1432,6 +1432,18 @@ class PolishPage(BasePage):
         g.add_row("Style", mode_col)
 
         self.body.addStretch(1)
+
+    def _on_enabled_toggled(self, checked: bool) -> None:
+        """Make the common path work: enabling polish should enable a real
+        provider and a non-raw mode unless the user already chose otherwise."""
+        if checked:
+            if self.provider_combo.currentData() == "none":
+                idx = self.provider_combo.findData("opencode")
+                if idx >= 0:
+                    self.provider_combo.setCurrentIndex(idx)
+            if self.mode_seg.current_key() == "raw":
+                self.mode_seg.set_current_key("clean")
+        self.shell.mark_dirty()
 
     def _on_mode_changed(self, key: str) -> None:
         self.mode_hint.setText(OUTPUT_MODE_HINTS.get(key, ""))
@@ -1519,8 +1531,15 @@ class PolishPage(BasePage):
         self.mode_hint.setText(OUTPUT_MODE_HINTS.get(self.mode_seg.current_key(), ""))
 
     def collect_into(self, cfg: dict) -> None:
-        cfg["post_processing_enabled"] = self.enabled.isChecked()
-        cfg["post_processing_provider"] = str(self.provider_combo.currentData() or "none")
+        enabled = self.enabled.isChecked()
+        provider = str(self.provider_combo.currentData() or "none")
+        mode = self.mode_seg.current_key()
+        if enabled and provider == "none":
+            provider = "opencode"
+        if enabled and mode == "raw":
+            mode = "clean"
+        cfg["post_processing_enabled"] = enabled
+        cfg["post_processing_provider"] = provider
         cfg["opencode_base_url"] = self.base_url.text().strip()
         cfg["opencode_api_key_env"] = (
             self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
@@ -1532,7 +1551,7 @@ class PolishPage(BasePage):
             self.smart_model.currentText().strip() or DEFAULT_CONFIG["opencode_smart_model"]
         )
         cfg["opencode_timeout_s"] = int(self.timeout_spin.value())
-        cfg["output_mode"] = self.mode_seg.current_key()
+        cfg["output_mode"] = mode
 
 
 # --- Updates ------------------------------------------------------------------------

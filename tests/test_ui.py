@@ -294,6 +294,25 @@ def test_polish_page_collects(window):
     assert collected["output_mode"] == "clean"
 
 
+def test_polish_enable_selects_provider_and_api_mode(window):
+    page = window.page("polish")
+    page.provider_combo.setCurrentIndex(0)
+    page.mode_seg.set_current_key("raw")
+    page.enabled.setChecked(True)
+    assert page.provider_combo.currentData() == "opencode"
+    assert page.mode_seg.current_key() == "clean"
+
+
+def test_polish_collect_normalizes_enabled_raw_disabled_provider(window):
+    page = window.page("polish")
+    page.enabled.setChecked(True)
+    page.provider_combo.setCurrentIndex(0)
+    page.mode_seg.set_current_key("raw")
+    collected = window._collect_values()
+    assert collected["post_processing_provider"] == "opencode"
+    assert collected["output_mode"] == "clean"
+
+
 def test_polish_api_key_env_blank_falls_back(window):
     window.page("polish").api_key_env.setText("   ")
     assert window._collect_values()["opencode_api_key_env"] == DEFAULT_CONFIG["opencode_api_key_env"]

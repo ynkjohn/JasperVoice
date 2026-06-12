@@ -226,12 +226,6 @@ class OpenCodePostProcessor(PostProcessor):
                 "OpenCode base URL is not configured. Set opencode_base_url in settings."
             )
 
-        api_key = os.environ.get(self._api_key_env)
-        if not api_key:
-            raise PostProcessorError(
-                f"API key not found. Set the {self._api_key_env} environment variable."
-            )
-
         model = self._fast_model if effective_mode in FAST_MODES else self._smart_model
         system_prompt = PROMPTS.get(effective_mode, PROMPTS["clean"])
 
@@ -246,8 +240,10 @@ class OpenCodePostProcessor(PostProcessor):
         body = _json.dumps(payload).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
         }
+        api_key = os.environ.get(self._api_key_env or "")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
         url = _build_url(self._base_url)
         try:

@@ -131,6 +131,10 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(out.get("post_processing_provider"), str) or out["post_processing_provider"] not in VALID_PROVIDERS:
         log.warning("Invalid post_processing_provider %r, falling back to 'none'", out.get("post_processing_provider"))
         out["post_processing_provider"] = "none"
+    if out["post_processing_enabled"] and out["post_processing_provider"] == "none":
+        out["post_processing_provider"] = "opencode"
+    if out["post_processing_enabled"] and out["output_mode"] == "raw":
+        out["output_mode"] = "clean"
     if not isinstance(out.get("opencode_base_url"), str):
         log.warning("Invalid opencode_base_url %r, falling back to ''", out.get("opencode_base_url"))
         out["opencode_base_url"] = ""

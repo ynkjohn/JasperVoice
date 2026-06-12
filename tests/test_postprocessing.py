@@ -229,12 +229,19 @@ def test_opencode_empty_base_url_raises():
             pp.process("hello", mode="clean")
 
 
-def test_opencode_missing_api_key_raises():
-    pp = OpenCodePostProcessor(base_url="https://api.example.com", request_fn=_fake_request_fn())
+def test_opencode_missing_api_key_omits_auth_and_succeeds():
+    def check(payload, headers):
+        assert payload["model"]
+        assert "Authorization" not in headers
+
+    pp = OpenCodePostProcessor(
+        base_url="https://api.example.com",
+        request_fn=_fake_request_fn(payload_check=check),
+    )
     with pytest.MonkeyPatch().context() as mp:
         mp.delenv("OPENCODE_API_KEY", raising=False)
-        with pytest.raises(PostProcessorError, match="API key"):
-            pp.process("hello", mode="clean")
+        result = pp.process("hello", mode="clean")
+    assert result.text == "final text"
 
 
 def test_opencode_api_key_not_in_error_message():
