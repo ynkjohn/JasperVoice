@@ -582,7 +582,7 @@ def test_diagnose_polish_config_no_leak_of_alt_secret(monkeypatch):
     """The diagnostic must never echo the alt env var's value into issues."""
     from jaspervoice.postprocessing import diagnose_polish_config
 
-    secret = "sk-supersecretvalue1234567890"
+    secret = "fake-supersecretvalue1234567890"
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", secret)
     diag = diagnose_polish_config("https://api.example.com/v1", "OPENCODE_API_KEY")

@@ -1476,7 +1476,7 @@ class PolishPage(BasePage):
         self.test_btn.setMinimumWidth(80)
         self.test_btn.setToolTip(
             "Check endpoint, API key env var, and any auto-detected alternative. "
-            "No network call — runs in milliseconds."
+            "No network call; runs in milliseconds."
         )
         self.test_btn.clicked.connect(self._test_config)
         frow.addWidget(self.test_btn, 0)
@@ -1544,7 +1544,7 @@ class PolishPage(BasePage):
     # -- fetch models (background) --
 
     def _test_config(self) -> None:
-        """Local diagnostic — shows env var / endpoint status without any network call.
+        """Local diagnostic; shows env var / endpoint status without any network call.
 
         Helps the user answer "why does Polish 403?" without doing a full take.
         """
@@ -1558,7 +1558,7 @@ class PolishPage(BasePage):
         if diag["base_url_set"]:
             lines.append(f"Endpoint: {diag['base_url']}")
         else:
-            lines.append("Endpoint: (empty) — set it above.")
+            lines.append("Endpoint: (empty) - set it above.")
 
         if diag["env_var_name_valid"]:
             if diag["env_var_set"]:

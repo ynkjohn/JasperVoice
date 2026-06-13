@@ -95,7 +95,7 @@ def _provider_http_error(action: str, code: int, reason: str, api_key_env: str, 
     else:
         alt = _detect_alt_api_key_env(api_key_env)
         alt_hint = (
-            f" Detected a value under '{alt}' — change the API key env var field "
+            f" Detected a value under '{alt}'; change the API key env var field "
             f"to '{alt}' to use it."
             if alt else ""
         )
