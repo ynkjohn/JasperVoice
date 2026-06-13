@@ -273,6 +273,109 @@ def test_paste_delay_ms_reaches_inject_text(qt_app, tmp_path, monkeypatch):
     assert _text == "hello world"
 
 
+def test_noise_gate_runs_in_worker_when_enabled(qt_app, tmp_path, monkeypatch):
+    """When noise_gate_enabled, the worker must pass audio through apply_noise_gate
+    before transcribe(). We assert the gate is invoked on the take's audio."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+        "min_recording_ms": 200,
+        "noise_gate_enabled": True,
+    })
+    monkeypatch.setattr(
+        "jaspervoice.app.injection.inject_text",
+        lambda t, settle_ms=30: True,
+    )
+
+    gate_calls = []
+
+    def _fake_gate(audio, sample_rate=16000):
+        gate_calls.append(audio.size)
+        return audio
+
+    monkeypatch.setattr("jaspervoice.app.apply_noise_gate", _fake_gate)
+
+    from jaspervoice.transcription import TranscriptionResult
+    monkeypatch.setattr(
+        "jaspervoice.app.Transcriber.transcribe",
+        lambda self, audio, sample_rate=16000: TranscriptionResult(
+            text="gated hello", language="en", duration=0.5
+        ),
+    )
+
+    a = App()
+    a.setup()
+
+    fake_audio = (np.random.default_rng(2).normal(0, 0.01, 8000)).astype(np.float32)
+    monkeypatch.setattr(a._recorder, "stop", lambda: fake_audio)
+
+    a._on_press()
+    a._on_release()
+
+    deadline = time.monotonic() + 20.0
+    while a._busy and time.monotonic() < deadline:
+        qt_app.processEvents(QEventLoop.AllEvents, 100)
+
+    a._shutdown()
+
+    assert gate_calls == [8000], f"Gate not invoked on take audio: {gate_calls}"
+
+
+def test_noise_gate_skipped_when_disabled(qt_app, tmp_path, monkeypatch):
+    """With noise_gate_enabled False, apply_noise_gate must not be called."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr("jaspervoice.config.load_config", lambda: {
+        "hotkey": "ctrl+shift+space",
+        "language": "pt",
+        "model_size": "tiny",
+        "compute_type": "int8",
+        "device": "cpu",
+        "sample_rate": 16000,
+        "min_recording_ms": 200,
+        "noise_gate_enabled": False,
+    })
+    monkeypatch.setattr(
+        "jaspervoice.app.injection.inject_text",
+        lambda t, settle_ms=30: True,
+    )
+
+    gate_calls = []
+    monkeypatch.setattr(
+        "jaspervoice.app.apply_noise_gate",
+        lambda audio, sample_rate=16000: gate_calls.append(audio.size) or audio,
+    )
+
+    from jaspervoice.transcription import TranscriptionResult
+    monkeypatch.setattr(
+        "jaspervoice.app.Transcriber.transcribe",
+        lambda self, audio, sample_rate=16000: TranscriptionResult(
+            text="raw hello", language="en", duration=0.5
+        ),
+    )
+
+    a = App()
+    a.setup()
+
+    fake_audio = (np.random.default_rng(3).normal(0, 0.01, 8000)).astype(np.float32)
+    monkeypatch.setattr(a._recorder, "stop", lambda: fake_audio)
+
+    a._on_press()
+    a._on_release()
+
+    deadline = time.monotonic() + 20.0
+    while a._busy and time.monotonic() < deadline:
+        qt_app.processEvents(QEventLoop.AllEvents, 100)
+
+    a._shutdown()
+
+    assert gate_calls == [], f"Gate ran despite being disabled: {gate_calls}"
+
+
 def test_language_changed_syncs_settings(qt_app, tmp_path, monkeypatch):
     """App._on_language_changed("en") must update SettingsWindow config to 'en'."""
     monkeypatch.setenv("APPDATA", str(tmp_path))

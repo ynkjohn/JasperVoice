@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication
 from . import config as cfg_mod
 from . import injection
 from . import sounds
-from .audio import Recorder, RecorderError
+from .audio import Recorder, RecorderError, apply_noise_gate
 from .dictionary import DeveloperDictionary
 from .history import TranscriptionHistory
 from .hotkey import HotkeyListener, parse_hotkey
@@ -71,6 +71,7 @@ class TranscriptionWorker(QObject):
         post_processing_enabled: bool = False,
         dictionary: Optional[DeveloperDictionary] = None,
         warmup: bool = True,
+        noise_gate_enabled: bool = False,
     ):
         super().__init__()
         self._transcriber = transcriber
@@ -78,6 +79,7 @@ class TranscriptionWorker(QObject):
         self._postprocessor: PostProcessor = postprocessor or NoopPostProcessor()
         self._output_mode = output_mode
         self._post_processing_enabled = post_processing_enabled
+        self._noise_gate_enabled = noise_gate_enabled
         self._dictionary: DeveloperDictionary = dictionary or DeveloperDictionary()
         self._warmup = warmup
         self._pending: Optional[tuple] = None
@@ -130,6 +132,11 @@ class TranscriptionWorker(QObject):
             audio, sample_rate, inject = pending
             try:
                 self.state.emit("processing")
+                if self._noise_gate_enabled:
+                    try:
+                        audio = apply_noise_gate(audio, sample_rate=sample_rate)
+                    except Exception as e:
+                        log.warning("Noise gate failed: %s. Using raw audio.", e)
                 result = self._transcriber.transcribe(audio, sample_rate=sample_rate)
                 raw_text = result.text.strip()
                 if not raw_text:
@@ -481,6 +488,7 @@ class App(QObject):
             post_processing_enabled=bool(self._cfg.get("post_processing_enabled", False)),
             dictionary=DeveloperDictionary(self._cfg.get("dictionary", [])),
             warmup=bool(self._cfg.get("warmup_on_launch", True)),
+            noise_gate_enabled=bool(self._cfg.get("noise_gate_enabled", False)),
         )
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
@@ -641,6 +649,7 @@ class App(QObject):
             self._worker._output_mode = new_cfg.get("output_mode", "raw")
             self._worker._post_processing_enabled = bool(new_cfg.get("post_processing_enabled", False))
             self._worker._postprocessor = self._build_postprocessor(new_cfg)
+            self._worker._noise_gate_enabled = bool(new_cfg.get("noise_gate_enabled", False))
 
         # Input device (takes effect on the next recording)
         if self._recorder is not None:
@@ -657,10 +666,10 @@ class App(QObject):
         self._apply_launch_at_login(bool(new_cfg.get("launch_at_login", False)))
 
         # NOTE adapter points (settings are persisted; runtime behavior pending):
-        # - noise_gate_enabled: apply an RMS gate to `audio` in TranscriptionWorker.run
-        #   before transcribe().
         # - warmup_on_launch: read at worker startup only; a change applies next launch.
         # sound_feedback is live: _set_state reads it from self._cfg on every transition.
+        # noise_gate_enabled is live: hot-reloaded onto the worker above; the gate
+        # runs in TranscriptionWorker.run before transcribe().
 
         # Sync config to tray so its menu reflects current values
         if self._tray is not None:

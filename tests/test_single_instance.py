@@ -12,6 +12,7 @@ import sys
 import pytest
 
 from jaspervoice.single_instance import SingleInstance, MUTEX_NAME, _ERROR_ALREADY_EXISTS
+from jaspervoice import single_instance
 
 
 def test_acquire_returns_true_on_non_windows(monkeypatch):
@@ -67,3 +68,33 @@ def test_guard_fails_open_on_error(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", boom)
     assert g.acquire() is True
+
+
+def test_acquire_tracks_active_instance(monkeypatch):
+    """acquire() registers the guard as the process-wide active instance so
+    release_active() can free the named mutex before launching the updater."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(single_instance, "_active_instance", None)
+    g = SingleInstance()
+    assert g.acquire() is True
+    assert single_instance._active_instance is g
+    g.release()
+    assert single_instance._active_instance is None
+
+
+def test_release_active_is_safe_with_no_guard(monkeypatch):
+    """release_active() must be a no-op (never raise) when nothing is held."""
+    monkeypatch.setattr(single_instance, "_active_instance", None)
+    single_instance.release_active()  # should not raise
+
+
+def test_release_active_releases_held_guard(monkeypatch):
+    """release_active() releases the currently-held guard (the updater path)."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(single_instance, "_active_instance", None)
+    g = SingleInstance()
+    g.acquire()
+    assert single_instance._active_instance is g
+    single_instance.release_active()
+    assert single_instance._active_instance is None
+    assert g._acquired is False

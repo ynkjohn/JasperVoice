@@ -1029,8 +1029,9 @@ class AudioPage(BasePage):
         self.noise_gate = Switch()
         self.noise_gate.toggled.connect(dirty)
         g.add_row("Noise gate", self.noise_gate,
-                  "Cuts background noise below a threshold before transcription. "
-                  "Setting is saved now; the audio filter lands in a future update.")
+                  "Silences low-energy background noise (fan, hiss) between words "
+                  "before transcription, so Whisper is less likely to invent filler. "
+                  "Adapts to each take and only attenuates — speech is preserved.")
         self.sound_feedback = SegmentedControl([
             ("off", "Off"), ("subtle", "Subtle"), ("all", "All events"),
         ])

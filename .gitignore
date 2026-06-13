@@ -30,6 +30,7 @@ history.json
 prototype/
 design/
 benchmark/
+designatual/
 
 # Local agent/chat transcripts
 session-*.md

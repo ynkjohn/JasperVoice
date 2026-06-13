@@ -756,7 +756,16 @@ class UpdateDialog(QMainWindow):
 
     def _launch_install(self) -> None:
         from . import updater
+        from . import single_instance
 
+        # Release our single-instance named mutex BEFORE launching the
+        # installer. Inno's AppMutex gate runs at the installer's startup —
+        # before its CloseApplications phase — so if the mutex is still held it
+        # aborts a /VERYSILENT update with "JasperVoice is currently running"
+        # (the suppressed prompt defaults to Cancel). Releasing it first lets
+        # the installer past that gate; CloseApplications then closes this
+        # process to unlock the _internal\*.dll files.
+        single_instance.release_active()
         try:
             updater.launch_installer(self._installer_path, silent=True)
         except updater.UpdateError as e:

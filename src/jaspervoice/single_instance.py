@@ -28,6 +28,25 @@ MUTEX_NAME = "JasperVoice_SingleInstance_Mutex"
 # ERROR_ALREADY_EXISTS: the mutex was already created by another process.
 _ERROR_ALREADY_EXISTS = 183
 
+# The most recently acquired guard, so code far from App (e.g. the update
+# dialog) can release the named mutex before launching the Inno installer.
+# The installer's AppMutex check runs at *startup*, before its
+# CloseApplications phase; if the mutex is still held it aborts the silent
+# install with "JasperVoice is currently running". Releasing it here lets the
+# installer past that gate while the app finishes quitting.
+_active_instance: "Optional[SingleInstance]" = None
+
+
+def release_active() -> None:
+    """Release the process's single-instance mutex, if one is held.
+
+    Safe to call multiple times and when no guard was ever acquired. Used right
+    before launching the updater installer so its AppMutex gate doesn't abort.
+    """
+    guard = _active_instance
+    if guard is not None:
+        guard.release()
+
 
 class SingleInstance:
     """Acquire a process-wide single-instance lock.
@@ -51,10 +70,12 @@ class SingleInstance:
 
     def acquire(self) -> bool:
         """Return True if this is the only instance; False if another holds it."""
+        global _active_instance
         if sys.platform != "win32":
             # No global named mutex story we rely on outside Windows; the app
             # only ships for Windows. Don't block dev/test runs elsewhere.
             self._acquired = True
+            _active_instance = self
             return True
         try:
             import ctypes
@@ -75,6 +96,7 @@ class SingleInstance:
                     last_error,
                 )
                 self._acquired = True  # fail open
+                _active_instance = self
                 return True
             self._handle = handle
             if last_error == _ERROR_ALREADY_EXISTS:
@@ -85,14 +107,17 @@ class SingleInstance:
                 self._acquired = False
                 return False
             self._acquired = True
+            _active_instance = self
             return True
         except Exception as e:  # never let the guard crash startup
             log.warning("Single-instance guard error: %s; allowing launch", e)
             self._acquired = True
+            _active_instance = self
             return True
 
     def release(self) -> None:
         """Close the mutex handle (the OS also does this automatically on exit)."""
+        global _active_instance
         if self._handle and sys.platform == "win32":
             try:
                 import ctypes
@@ -102,3 +127,5 @@ class SingleInstance:
                 pass
         self._handle = None
         self._acquired = False
+        if _active_instance is self:
+            _active_instance = None
