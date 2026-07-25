@@ -1,118 +1,138 @@
+<div align="center">
+
+<img src="assets/icon.svg" alt="JasperVoice" width="104" height="104" />
+
 # JasperVoice
 
-Local push-to-talk voice dictation for Windows. Hold a hotkey, speak, release — your words land in whatever app has focus. Whisper runs entirely on your machine by default. No subscription, no telemetry.
+### Push-to-talk dictation that keeps your audio on your machine.
+
+Hold a key. Speak. Release. Whisper transcribes **locally** and the text drops
+into whatever app has focus — editor, browser, chat, terminal.
+No subscription. No required cloud. No telemetry.
+
+[![Platform](https://img.shields.io/badge/platform-Windows-E8E6E6?labelColor=0F0F0F)](#)
+[![Python](https://img.shields.io/badge/python-3.11+-D97757?labelColor=0F0F0F)](#)
+[![Engine](https://img.shields.io/badge/engine-faster--whisper-D97757?labelColor=0F0F0F)](#under-the-hood)
+[![GPU](https://img.shields.io/badge/CUDA-accelerated-22c55e?labelColor=0F0F0F)](#gpu-acceleration)
+[![Privacy](https://img.shields.io/badge/network-offline_by_default-22c55e?labelColor=0F0F0F)](#privacy)
+[![License](https://img.shields.io/badge/license-MIT-D97757?labelColor=0F0F0F)](#license)
+
+<br/>
+
+<a href="docs/media/JasperVoice-demo.mp4">
+  <img src="docs/media/poster-demo.png" alt="Watch the JasperVoice demo — Listening, Processing, Sent" width="820" />
+</a>
+
+<sub>▶ **[Watch the 30-second demo](docs/media/JasperVoice-demo.mp4)** — the overlay pill goes Listening → Processing → Sent while your words type themselves.</sub>
+
+</div>
+
+---
+
+## What it is
+
+JasperVoice is a tiny Windows tray app that turns your voice into text **anywhere**.
+Hold `Ctrl+Shift+Space`, talk, and let go — a floating pill mirrors each stage of
+the pipeline in real time, then the finished text is pasted into the focused
+window. Everything runs on-device with [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper),
+so your audio is never uploaded, recorded to a server, or used to train anything.
+
+```
+   ┌──────────┐     ┌──────────┐     ┌──────────────┐     ┌──────────────┐
+   │  Hotkey  │ ──▶ │  Record  │ ──▶ │  Transcribe  │ ──▶ │    Inject    │
+   │  (hold)  │     │   mic    │     │   Whisper    │     │   Ctrl + V   │
+   └──────────┘     └──────────┘     └──────────────┘     └──────────────┘
+        you             local            on-device            focused app
+```
+
+The pill speaks the same language as the pipeline:
+
+| State | Pill | Meaning |
+|:--|:--|:--|
+| 🔴 **Listening** | red, live spectrum | recording your mic |
+| 🟠 **Processing** | amber, slow pulse | Whisper transcribing on-device |
+| 🟢 **Sent** | green, decaying bars | text pasted into the active window |
+
+---
+
+## A guided tour
+
+<div align="center">
+
+<a href="docs/media/JasperVoice-tour.mp4">
+  <img src="docs/media/poster-tour.png" alt="Tour of the JasperVoice settings window" width="820" />
+</a>
+
+<sub>▶ **[Watch the app tour](docs/media/JasperVoice-tour.mp4)** — Overview, History, Model &amp; Engine, AI Polish, and the Dictionary.</sub>
+
+</div>
+
+The settings window is a flat, dark **instrument panel**: a sidebar of pages,
+hairline-separated rows, a live status bar, and a working settings search. Most
+settings apply on **Apply**; startup-only options take effect on the next launch,
+while History and Dictionary changes are saved immediately.
+
+---
+
+## Why you'll like it
+
+- **🔒 Private by default.** Audio never leaves the machine. Text leaves *only* if
+  you explicitly turn on optional AI polish — and even then, never the audio.
+- **⚡ Fast.** `faster-whisper` on CTranslate2, with automatic CUDA acceleration
+  and a graceful CPU fallback. ~1–2s for a 5s clip on a modern CPU.
+- **🌍 Universal.** Pastes into anything that accepts `Ctrl+V`. No per-app plugins,
+  no browser extensions, no integrations to wire up.
+- **🪶 Out of the way.** Lives in the system tray behind one hotkey. No windows
+  fighting for your screen.
+- **📦 Self-contained.** Ships as a per-user installer (no admin) with verified,
+  in-app updates.
+
+---
 
 ## Features
 
-- **Global push-to-talk hotkey** (default `Ctrl+Shift+Space`)
-- **Toggle mode** — press once to start, again to stop (alternative to hold-to-talk)
-- **Local Whisper transcription** via `faster-whisper` (offline, private)
-- **GPU acceleration** — CUDA support in both the dev run and the standalone build
-- **Universal text injection** — works in any app that accepts Ctrl+V
-- **Animated overlay** — a floating pill with a live audio spectrum while you speak
-- **Transcription history & statistics** — words, audio time, average WPM
-- **Developer dictionary** — offline phrase corrections for technical terms
-- **Optional AI post-processing** via any OpenAI-compatible API (with in-app model discovery)
-- **Sound feedback** — optional quiet tones on recording start/stop, send, and error
-- **System tray control** with language switching
-- **Private by default** — audio never leaves your machine; text leaves only if you enable optional post-processing
+| | |
+|---|---|
+| **Push-to-talk** | Global `Ctrl+Shift+Space` (configurable) — hold to record, release to transcribe. |
+| **Toggle mode** | Press once to start, again to stop. Accidental taps are debounced. |
+| **Local Whisper** | Offline transcription, model sizes `tiny` → `large-v3`. |
+| **GPU acceleration** | CUDA in both the dev run and the standalone build, CPU fallback. |
+| **Universal injection** | Clipboard + SendInput `Ctrl+V` into the active window. |
+| **Animated overlay** | Floating pill with a live audio spectrum driven by real FFT bands. |
+| **History & stats** | Words dictated, audio captured, average WPM, searchable history. |
+| **Developer dictionary** | Offline phrase → replacement fixes for technical terms. |
+| **AI Polish (optional)** | Refine text through any OpenAI-compatible API, local or remote. |
+| **Sound feedback** | Optional quiet tones on record start/stop, send, and error. |
+| **System tray** | State icons, language switching, settings, stats, and updates. |
 
-## Quick start
+---
+
+## Quickstart
+
+### Install (recommended)
+
+No admin, no terminal. Grab the latest `JasperVoice-Setup-<version>.exe` from the
+[**Releases**](https://github.com/ynkjohn/JasperVoice/releases) page and run it.
+JasperVoice boots straight to the system tray and updates itself from then on.
+
+### Run from source
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -e .
 .venv\Scripts\python.exe -m jaspervoice
 ```
 
-First run downloads the Whisper `small` model (~460 MB) to `%APPDATA%/JasperVoice/models/`.
+First run downloads the Whisper `small` model (~460 MB) to
+`%APPDATA%\JasperVoice\models\`. The app starts in the tray; the default hotkey
+is `Ctrl+Shift+Space`.
 
-## Standalone app (no terminal)
-
-To run JasperVoice by double-clicking instead of launching from the terminal,
-build a windowed executable with PyInstaller:
-
-```powershell
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.venv\Scripts\pyinstaller.exe jaspervoice.spec --noconfirm
-```
-
-Output lands in `dist/JasperVoice/`. Launch `dist/JasperVoice/JasperVoice.exe` —
-it boots straight to the system tray with no console window. Make a Desktop or
-Start Menu shortcut to `JasperVoice.exe` for one-click access.
-
-Notes:
-
-- The build is a **one-folder** bundle. Keep `JasperVoice.exe` next to its
-  `_internal/` folder; moving the exe alone will break it. To relocate, move
-  the whole `JasperVoice` folder.
-- **Bundle size depends on GPU support.** The default GPU build bundles cuBLAS
-  (about 735 MB by itself), producing a one-folder bundle around 1.1 GB and a
-  compressed installer around 514 MB. Without `nvidia-*` packages the build is
-  CPU-only and omits the CUDA DLLs. See [GPU acceleration](#gpu-acceleration).
-- The Whisper model is **not** bundled. It still downloads on first run to
-  `%APPDATA%/JasperVoice/models/`, exactly like the dev workflow.
-- Logs go to `%APPDATA%/JasperVoice/jaspervoice.log` (rotating) since the
-  windowed build has no console to print to.
-
-## Installer & updates
-
-For a Discord-style experience — download a single installer, run it, and the
-app behaves like a normal Windows application — JasperVoice ships an
-[Inno Setup](https://jrsoftware.org/isinfo.php) installer plus an in-app
-updater backed by GitHub Releases.
-
-### Build a release
-
-```powershell
-# Requires Inno Setup 6. The script auto-detects PATH, Program Files,
-# and winget's per-user install path.
-.venv\Scripts\pip.exe install -r requirements-dev.txt
-.\scripts\build_release.ps1
-```
-
-This runs PyInstaller, compiles the installer, and emits two artifacts to
-`dist\installer\`:
-
-- `JasperVoice-Setup-<version>.exe` — the installer/bootstrapper.
-- `SHA256SUMS` — the checksum the in-app updater verifies before applying.
-
-Publish a GitHub Release tagged `v<version>` and upload **both** files as
-assets. That is the entire release flow — bump `__version__`, build, upload.
-
-### How the installer behaves
-
-- **Per-user install** (`%LocalAppData%\Programs\JasperVoice` by default) — no
-  admin prompt for install or updates.
-- Creates Start Menu and (optional) Desktop shortcuts. An optional checkbox
-  adds a per-user **autostart** entry (Startup folder, no registry hacks).
-- Settings, history, and the downloaded model live under
-  `%APPDATA%\JasperVoice\` and are **preserved across updates and uninstalls**.
-- Only one instance runs at a time (a named mutex shared with the installer so
-  an update can close the running app before replacing files).
-
-### Updating
-
-Tray → **Check for updates...** (or Settings → Updates → *Check now*). The app
-queries the configured GitHub repo's latest release, and if a newer version
-exists it downloads the installer, **verifies its SHA-256**, then launches it.
-The installer closes JasperVoice, replaces the files in place, and relaunches.
-
-- **Failure-safe:** if the update check or download fails (offline, GitHub
-  down, checksum mismatch), the running app is untouched and keeps working.
-- **Versioned artifacts only:** the updater downloads the published installer
-  asset, never raw source code, and never runs `git`.
-- **No telemetry:** the only network call is to the public GitHub API and the
-  asset URL, and only when you trigger a check (or enable check-on-startup).
-- **Offline / air-gapped:** Settings → Updates → **Install from file...** runs
-  an installer `.exe` you downloaded by hand. It is integrity-checked before
-  running.
-
-Disable the optional startup check entirely in Settings → Updates.
+---
 
 ## Configuration
 
-Edit `%APPDATA%/JasperVoice/config.json`:
+Everything is editable in the window (tray → **Settings…**). To edit by hand, see
+`%APPDATA%\JasperVoice\config.json`:
 
 ```json
 {
@@ -128,62 +148,36 @@ Edit `%APPDATA%/JasperVoice/config.json`:
 }
 ```
 
-Everything is also editable in the in-app window (tray → Settings…): a
-navigable sidebar with Overview, History, Dictionary, General, Audio & Mic,
-Model & Engine, AI Polish, Updates, and Diagnostics pages, plus a settings
-search. Changes apply live on **Apply**; dictionary and history edits are
-saved immediately. Available languages: `pt`, `en`, `es`, `auto` (and any
-ISO 639-1 code).
+**Languages:** `pt`, `en`, `es`, `auto` (and any ISO 639-1 code).
 
-### Hotkey modes
+**Hotkey modes**
+- `push_to_talk` *(default)* — hold to record, release to transcribe.
+- `toggle` — press once to start, again to stop; a short tap is debounced.
 
-- `push_to_talk` (default): hold the hotkey to record, release to transcribe.
-- `toggle`: press once to start recording, press again to stop. A short tap is
-  ignored (debounced) so an accidental press won't start a take.
+### Developer dictionary
 
-### History & statistics
-
-Every transcription is stored locally in
-`%APPDATA%/JasperVoice/history.json` (capped at 200 entries) with its word
-count, audio duration, and the mode used. Open tray → **Statistics…** (or the
-**History** page in the main window) to see totals, average words-per-minute,
-and a searchable, filterable table of recent transcriptions with per-row copy
-and delete. **Export…** writes the history to a JSON file of your choice;
-**Clear** wipes it after confirmation.
-
-### Developer Dictionary
-
-The dictionary is a local, offline list of phrase→replacement mappings. It corrects spoken technical terms before optional OpenCode post-processing.
+A local, offline list of `phrase → replacement` mappings applied **before** any
+AI polish. Matching is case-insensitive, respects word boundaries, and applies
+longer phrases first.
 
 ```json
 {
   "dictionary": [
-    {"phrase": "open code", "replacement": "OpenCode"},
-    {"phrase": "use effect", "replacement": "useEffect"},
-    {"phrase": "fast api", "replacement": "FastAPI"},
-    {"phrase": "tail wind", "replacement": "Tailwind"}
+    { "phrase": "open code", "replacement": "OpenCode" },
+    { "phrase": "use effect", "replacement": "useEffect" },
+    { "phrase": "fast api", "replacement": "FastAPI" },
+    { "phrase": "tail wind", "replacement": "Tailwind" }
   ]
 }
 ```
 
-Matching is case-insensitive, respects word boundaries, and applies longer phrases first. Replacements run entirely on your machine.
+### AI Polish (optional)
 
-Rules can also be managed on the **Dictionary** page of the main window (add,
-delete, enable/disable per rule, JSON import/export). A rule with
-`"enabled": false` is kept but not applied; entries without the key are
-enabled.
-
-### AI Polish (post-processing)
-
-Optionally refine dictation with **any OpenAI-compatible API** after Whisper —
-local (Ollama, LM Studio, vLLM) or remote (OpenRouter, OpenCode, cloud). The
-**AI Polish** page configures everything: provider, endpoint, API key env-var
-name, output style, a **Test** button that diagnoses your setup locally (no
-network — it reports whether the endpoint is filled in and whether the API key
-env var is actually set in JasperVoice's process), and a **Fetch models** button
-that queries the provider's `/v1/models` list so you can pick a Fast and a Smart
-model. Put a variable name such as `OPENCODE_API_KEY` in the app, not the raw
-`sk-...` key; the key itself is never stored. The equivalent `config.json` keys:
+Refine dictation through **any OpenAI-compatible API** after Whisper — local
+(Ollama, LM Studio, vLLM) or remote (OpenRouter, OpenCode, cloud). The **AI
+Polish** page configures the provider, endpoint, key env-var name, and output
+style. A **Test** button diagnoses your setup locally (no network), and **Fetch
+models** queries the provider's `/v1/models`.
 
 ```json
 {
@@ -193,95 +187,111 @@ model. Put a variable name such as `OPENCODE_API_KEY` in the app, not the raw
   "opencode_base_url": "https://your-api.example.com",
   "opencode_api_key_env": "OPENCODE_API_KEY",
   "opencode_fast_model": "DeepSeek V4 Flash",
-  "opencode_smart_model": "Qwen3.7 Max",
-  "opencode_timeout_s": 20
+  "opencode_smart_model": "Qwen3.7 Max"
 }
 ```
 
-Set `OPENCODE_API_KEY` in your environment and restart JasperVoice so the
-process can see it. If Polish returns 401/403, click **Test** to confirm the
-env var is visible to the app. Only the transcribed text is sent — never audio.
-The dictionary runs first, so corrected terms reach the API.
+> Store the **name** of an environment variable (e.g. `OPENCODE_API_KEY`), never
+> the raw `sk-...` key. Only the transcribed text is ever sent — never audio.
+
+---
 
 ## GPU acceleration
 
 JasperVoice runs on your NVIDIA GPU when CUDA is available, in both the dev run
 and the standalone build.
 
-### Dev run
-
-GPU "just works" if the CUDA runtime packages are installed in your venv:
-
-```bash
+```powershell
+# enable GPU in a source checkout
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
-With `"device": "auto"`, `transcription.py` tries CUDA first and falls back to
-CPU if loading fails. Set `"device": "cuda"` to force GPU (errors will surface
-instead of silently falling back), or `"device": "cpu"` to force CPU. On GPU,
-`"compute_type": "float16"` is the recommended setting.
-
-The **Model & Engine** page probes your hardware and shows a friendly
-recommendation ("On this PC, GPU (CUDA) with float16 is recommended" / "CPU
-with int8 is the best option"). It also manages the local Whisper models:
-download any size ahead of time (in the background, without freezing the app)
-or remove an installed model from disk.
-
-### Standalone build
-
-The PyInstaller build **bundles the CUDA runtime DLLs** when the `nvidia-*`
-packages are present in the venv at build time (see `_collect_cuda_dlls()` in
-`jaspervoice.spec`). A runtime hook (`scripts/rthook_cuda.py`) makes those DLLs
-discoverable by `ctranslate2.dll` inside the bundle. After building, confirm GPU
-is active by checking the log for:
-
-```
-Model warmup complete: loaded on device=cuda
-```
-
-If the `nvidia-*` packages are absent, the build falls back to a smaller
-CPU-only bundle automatically.
-
-### Runtime fallback
-
-Even with `device="auto"`, if CUDA model loading succeeds but actual
-transcription fails at runtime, the app falls back to CPU and retries the take,
+With `"device": "auto"`, transcription tries CUDA first and falls back to CPU if
+loading fails. On GPU, `"compute_type": "float16"` is recommended. The
+**Model & Engine** page probes your hardware and shows a recommendation. Even
+with `auto`, if CUDA loads but a take fails at runtime, the app retries on CPU —
 so a single dictation is never lost.
 
-Without GPU, `small` int8 on a modern Intel i5 takes ~1-2s per 5s audio clip —
-fine for push-to-talk. For light local testing, use `"device": "cpu"` and
-`"model_size": "tiny"`.
+---
 
-## Known limitations
+## Build & release
 
-- **Clipboard is overwritten** on every transcription. If you had something copied, it's gone. Restore is a planned v1.1 feature.
-- **Global hotkey may require admin** on first run (Windows low-level keyboard hook). If PTT does not register, run from an elevated terminal.
-- **Antivirus warnings** about the `keyboard` library are false positives — it's open-source and does not exfiltrate.
-- **Single instance**: a named mutex prevents a second copy from running (a second launch shows a tray notice and exits). Use the tray "Quit" to close.
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 
-## Architecture
+# one-folder standalone build (boots to tray, no console)
+.venv\Scripts\pyinstaller.exe jaspervoice.spec --noconfirm
+
+# full release: PyInstaller + Inno Setup installer + checksums
+.\scripts\build_release.ps1
+```
+
+`build_release.ps1` writes two artifacts to `dist\installer\`:
+
+- `JasperVoice-Setup-<version>.exe` — the per-user installer.
+- `SHA256SUMS` — the checksum the in-app updater verifies before applying.
+
+Publish a GitHub Release tagged `v<version>` with **both** files attached. The
+whole release flow is: bump `__version__`, build, upload.
+
+### Auto-update
+
+Tray → **Check for updates…** queries the latest release; if a newer version
+exists it downloads the installer, **verifies its SHA-256**, then launches it.
+The installer closes JasperVoice, replaces files in place, and relaunches. If
+anything fails (offline, checksum mismatch), the running app is untouched.
+
+---
+
+## Privacy
+
+JasperVoice makes **zero** network calls during normal dictation. Its optional
+network features are:
+
+1. **Model download** — from Hugging Face when a model is needed.
+2. **Updates** — the public GitHub API on startup by default (configurable) or
+   when you check manually; installer assets download only after confirmation.
+3. **AI Polish** — the transcribed *text* (never audio), only if you enable it.
+
+No analytics. No telemetry. No account.
+
+---
+
+## Under the hood
 
 ```
 config.py          JSON config at %APPDATA%/JasperVoice/ (validated, atomic writes)
-audio.py           sounddevice InputStream → numpy array; 7-band FFT for the overlay
+audio.py           sounddevice InputStream → numpy; 7-band FFT feeds the overlay
 transcription.py   faster-whisper with CUDA/CPU auto-fallback
 injection.py       clipboard + SendInput Ctrl+V
-hotkey.py          push-to-talk / toggle state machine on top of `keyboard` lib
+hotkey.py          push-to-talk / toggle state machine on top of `keyboard`
 history.py         thread-safe transcription history (JSON, capped at 200)
-postprocessing.py  optional OpenCode/OpenAI-compatible text polish
-dictionary.py      offline phrase→replacement corrections
-tray.py            QSystemTrayIcon with state icons + language/settings/stats/update menu
-overlay.py         frameless floating pill indicator (animated, state-colored)
-ui.py              navigable main window shell (sidebar/search/pages) + UpdateDialog
-ui_pages.py        the window's pages (Overview, History, Dictionary, …)
-ui_widgets.py      shared UI primitives (Switch, SegmentedControl, LevelMeter, …)
-single_instance.py named-mutex guard used by the app and installer
-updater.py         GitHub Releases update check/download/verify/launch flow
-assets.py          icon path resolution for dev and frozen runs
-app_gui.py         frozen/windowed entry point with file logging
-theme.py           dark QSS + STATE_COLORS palette
+postprocessing.py  optional OpenAI-compatible text polish
+dictionary.py      offline phrase → replacement corrections
+tray.py            system tray icon + language/settings/stats/update menu
+overlay.py         frameless floating pill (animated, state-colored)
+ui.py / ui_pages.py / ui_widgets.py   the navigable settings window
+updater.py         GitHub Releases check / download / verify / launch
 app.py             wires it all together
 ```
 
 Each module is small and replaceable. See `openspec/changes/jaspervoice-mvp/`
 for the original design rationale.
+
+---
+
+## Known limitations
+
+- **Clipboard is overwritten** on each transcription (restore is planned).
+- **Global hotkey may need admin** on first run (Windows low-level keyboard
+  hook); run elevated once if push-to-talk doesn't register.
+- **Antivirus warnings** about the `keyboard` library are false positives.
+- **Single instance** — a named mutex prevents a second copy; quit from the tray.
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+<div align="center"><sub>Built for people who'd rather talk than type — without sending their voice to a stranger's server.</sub></div>

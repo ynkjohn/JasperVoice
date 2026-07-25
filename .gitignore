@@ -37,6 +37,19 @@ session-*.md
 scratch_render.py
 scratch_shots/
 
+# Local agent tooling
+.agents/
+.claude/
+skills-lock.json
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Superseded captures that may contain local runtime data
+docs/media/archived-do-not-use/
+
 # Local agent instructions (not shipped with the project)
 AGENTS.md
 developer.md
