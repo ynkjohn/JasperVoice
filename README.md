@@ -6,7 +6,7 @@
 
 ## See it in action
 
-[Watch the 19-second demo](docs/media/JasperVoice-1.2-demo.mp4?raw=true)
+https://github.com/user-attachments/assets/a1c70d61-286d-4f14-83fc-78b873c6088f
 
 [Download the demo (MP4)](docs/media/JasperVoice-1.2-demo.mp4?raw=true) · [View the app screenshot](docs/media/JasperVoice-1.2-overview.png)
 
