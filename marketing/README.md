@@ -1,35 +1,13 @@
-# JasperVoice — marketing videos (Remotion)
+# JasperVoice demo
 
-Two 30-second, 1080p (1920×1080 @ 30fps) marketing videos built from scratch
-with [Remotion](https://www.remotion.dev). They mirror the JasperVoice design
-tokens (`src/theme.ts`, based on `src/jaspervoice/theme.py`) and recreate the
-overlay-pill behavior for deterministic footage that matches the product.
+The GitHub README uses **ReadmeDemo**, a 19-second Remotion composition with the actual v1.2 Windows overlay, Mic Check, and AI Polish preview. The editor scene illustrates insertion and uses text produced by the app's local Whisper pipeline from the included synthetic voice sample.
 
-| Composition | What it shows |
-|---|---|
-| **`PillDemo`** | Cinematic end-to-end: a chat app + the hotkey, then a zoom into the overlay pill running Listening → Processing → Sent, then a pan to the chat as the dictated text types itself in. |
-| **`AppTour`** | A guided tour of the settings window — Overview, History, Model & Engine, AI Polish, Dictionary — with the live pill floating in the corner. |
-
-The spectrum bars in the pill and the animated backdrop are drawn on an HTML
-`<canvas>` (`src/components/Pill.tsx`, `src/components/Background.tsx`).
-
-## Develop
-
-```bash
-npm install
-npm run dev          # open Remotion Studio
+```powershell
+npm ci
+npm run lint
+npx remotion render ReadmeDemo ../docs/media/JasperVoice-1.2-demo.mp4 --codec=h264 --crf=20
 ```
 
-## Render
+Source media is in `public/showcase`. To refresh the overlay and AI Polish captures, run `scripts/capture-showcase.py` from the repository root with JasperVoice installed in the Python environment and the tiny Whisper model available. Set `JASPER_SHOWCASE_ENDPOINT` to a local OpenAI-compatible `/v1` endpoint to include a real Polish preview result. The Mic Check clip is captured from the Windows app responding to a speech sample.
 
-```bash
-npx remotion render PillDemo out/JasperVoice-demo.mp4
-npx remotion render AppTour  out/JasperVoice-tour.mp4
-
-# optional poster frames
-npx remotion still PillDemo out/poster-demo.png --frame=235
-npx remotion still AppTour  out/poster-tour.png --frame=150
-```
-
-The original videos are stored in `../docs/media/`. The top-level README uses GitHub video
-attachments for playback and links to the originals for download.
+`PillDemo` and `AppTour` are the earlier compositions.
