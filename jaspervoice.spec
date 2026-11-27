@@ -25,7 +25,8 @@ Notes
   Net effect: GPU bundle ~1.0 GB (was ~3.0 GB), still loads on device=cuda.
 """
 
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, copy_metadata
+from importlib.metadata import PackageNotFoundError
 
 import importlib.util
 import os
@@ -104,7 +105,7 @@ fw_datas = collect_data_files("faster_whisper", includes=["assets/*"])
 
 # Ship the brand icon so the tray/window can load it at runtime via
 # jaspervoice.assets.icon_path() (it resolves sys._MEIPASS/assets).
-app_datas = [("assets/icon.ico", "assets")]
+app_datas = [("assets/icon.ico", "assets"), ("LICENSE", ".")]
 
 # CTranslate2 and onnxruntime ship native libs that PyInstaller's static
 # analysis can miss; collect them explicitly.
@@ -147,13 +148,23 @@ def _collect_cuda_dlls():
         if not os.path.isdir(bin_dir):
             continue
         for fn in os.listdir(bin_dir):
-            if fn.lower().endswith(".dll"):
+            if fn.lower().endswith(".dll") and not fn.lower().startswith("nvblas"):
                 out.append((os.path.join(bin_dir, fn), "."))
     print(f"Bundling {len(out)} CUDA DLLs from {nv_root} (subs={subs})")
     return out
 
 
-binaries += _collect_cuda_dlls()
+cuda_binaries = _collect_cuda_dlls()
+binaries += cuda_binaries
+
+# Keep the NVIDIA wheel notices with the redistributed CUDA libraries.
+for component in ("cublas", "cudnn"):
+    if any(os.path.basename(path).lower().startswith(component) for path, _ in cuda_binaries):
+        try:
+            app_datas += copy_metadata(f"nvidia-{component}-cu12")
+        except PackageNotFoundError:
+            # The libraries can also be installed outside a Python wheel.
+            pass
 
 hiddenimports = [
     "faster_whisper",
