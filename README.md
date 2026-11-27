@@ -33,14 +33,14 @@ No subscription. No required cloud. No telemetry.
 
 JasperVoice is a tiny Windows tray app that turns your voice into text **anywhere**.
 Hold `Ctrl+Shift+Space`, talk, and let go — a floating pill mirrors each stage of
-the pipeline in real time, then the finished text is pasted into the focused
+the pipeline in real time, then the finished text is inserted into the focused
 window. Everything runs on-device with [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper),
 so your audio is never uploaded, recorded to a server, or used to train anything.
 
 ```
    ┌──────────┐     ┌──────────┐     ┌──────────────┐     ┌──────────────┐
    │  Hotkey  │ ──▶ │  Record  │ ──▶ │  Transcribe  │ ──▶ │    Inject    │
-   │  (hold)  │     │   mic    │     │   Whisper    │     │   Ctrl + V   │
+   │  (hold)  │     │   mic    │     │   Whisper    │     │  Paste/Type  │
    └──────────┘     └──────────┘     └──────────────┘     └──────────────┘
         you             local            on-device            focused app
 ```
@@ -51,7 +51,7 @@ The pill speaks the same language as the pipeline:
 |:--|:--|:--|
 | 🔴 **Listening** | red, live spectrum | recording your mic |
 | 🟠 **Processing** | amber, slow pulse | Whisper transcribing on-device |
-| 🟢 **Sent** | green, decaying bars | text pasted into the active window |
+| 🟢 **Sent** | green, decaying bars | text inserted into the active window |
 
 ---
 
@@ -79,9 +79,9 @@ while History and Dictionary changes are saved immediately.
 - **🔒 Private by default.** Audio never leaves the machine. Text leaves *only* if
   you explicitly turn on optional AI polish — and even then, never the audio.
 - **⚡ Fast.** `faster-whisper` on CTranslate2, with automatic CUDA acceleration
-  and a graceful CPU fallback. ~1–2s for a 5s clip on a modern CPU.
-- **🌍 Universal.** Pastes into anything that accepts `Ctrl+V`. No per-app plugins,
-  no browser extensions, no integrations to wire up.
+  and a CPU fallback.
+- **🌍 Text insertion.** Paste into the focused app or use Type mode to leave
+  the Windows clipboard alone.
 - **🪶 Out of the way.** Lives in the system tray behind one hotkey. No windows
   fighting for your screen.
 - **📦 Self-contained.** Ships as a per-user installer (no admin) with verified,
@@ -97,7 +97,8 @@ while History and Dictionary changes are saved immediately.
 | **Toggle mode** | Press once to start, again to stop. Accidental taps are debounced. |
 | **Local Whisper** | Offline transcription, model sizes `tiny` → `large-v3`. |
 | **GPU acceleration** | CUDA in both the dev run and the standalone build, CPU fallback. |
-| **Universal injection** | Clipboard + SendInput `Ctrl+V` into the active window. |
+| **Text insertion** | Paste with `Ctrl+V` or type directly without using the clipboard. |
+| **Voice commands** | Map whole spoken phrases to keyboard shortcuts or executables. |
 | **Animated overlay** | Floating pill with a live audio spectrum driven by real FFT bands. |
 | **History & stats** | Words dictated, audio captured, average WPM, searchable history. |
 | **Developer dictionary** | Offline phrase → replacement fixes for technical terms. |
@@ -113,7 +114,8 @@ while History and Dictionary changes are saved immediately.
 
 No admin, no terminal. Grab the latest `JasperVoice-Setup-<version>.exe` from the
 [**Releases**](https://github.com/ynkjohn/JasperVoice/releases) page and run it.
-JasperVoice boots straight to the system tray and updates itself from then on.
+JasperVoice starts in the system tray. It checks for new releases on startup by
+default and lets you choose when to download and install an update.
 
 ### Run from source
 
@@ -143,12 +145,15 @@ Everything is editable in the window (tray → **Settings…**). To edit by hand
   "compute_type": "int8",
   "device": "auto",
   "sample_rate": 16000,
+  "injection_mode": "paste",
   "paste_delay_ms": 15,
   "min_recording_ms": 200
 }
 ```
 
-**Languages:** `pt`, `en`, `es`, `auto` (and any ISO 639-1 code).
+Choose Portuguese, English, Spanish, German, or Auto-detect in Settings or
+the tray. See [Dictation settings](docs/dictation-settings.md) for Type mode,
+voice commands, and AI Polish prompts.
 
 **Hotkey modes**
 - `push_to_talk` *(default)* — hold to record, release to transcribe.
@@ -176,8 +181,9 @@ longer phrases first.
 Refine dictation through **any OpenAI-compatible API** after Whisper — local
 (Ollama, LM Studio, vLLM) or remote (OpenRouter, OpenCode, cloud). The **AI
 Polish** page configures the provider, endpoint, key env-var name, and output
-style. A **Test** button diagnoses your setup locally (no network), and **Fetch
-models** queries the provider's `/v1/models`.
+style. The built-in prompts ask the model to preserve the original language.
+You can set a custom system prompt for each style. A **Test** button diagnoses
+your setup locally, and **Fetch models** queries the provider's `/v1/models`.
 
 ```json
 {
@@ -209,8 +215,7 @@ pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 With `"device": "auto"`, transcription tries CUDA first and falls back to CPU if
 loading fails. On GPU, `"compute_type": "float16"` is recommended. The
 **Model & Engine** page probes your hardware and shows a recommendation. Even
-with `auto`, if CUDA loads but a take fails at runtime, the app retries on CPU —
-so a single dictation is never lost.
+with `auto`, if CUDA loads but a take fails at runtime, the app retries the dictation on CPU.
 
 ---
 
@@ -234,19 +239,19 @@ so a single dictation is never lost.
 Publish a GitHub Release tagged `v<version>` with **both** files attached. The
 whole release flow is: bump `__version__`, build, upload.
 
-### Auto-update
+### Update from the app
 
-Tray → **Check for updates…** queries the latest release; if a newer version
-exists it downloads the installer, **verifies its SHA-256**, then launches it.
-The installer closes JasperVoice, replaces files in place, and relaunches. If
-anything fails (offline, checksum mismatch), the running app is untouched.
+Use **Check for updates…** in the tray. If a newer release is available,
+choose **Download & Update** to fetch the installer and verify its SHA-256.
+After verification, choose **Update now** to replace the installed files
+and relaunch JasperVoice.
 
 ---
 
 ## Privacy
 
-JasperVoice makes **zero** network calls during normal dictation. Its optional
-network features are:
+Dictation runs offline with a local model and AI Polish turned off. These
+features can use the network:
 
 1. **Model download** — from Hugging Face when a model is needed.
 2. **Updates** — the public GitHub API on startup by default (configurable) or
@@ -263,7 +268,8 @@ No analytics. No telemetry. No account.
 config.py          JSON config at %APPDATA%/JasperVoice/ (validated, atomic writes)
 audio.py           sounddevice InputStream → numpy; 7-band FFT feeds the overlay
 transcription.py   faster-whisper with CUDA/CPU auto-fallback
-injection.py       clipboard + SendInput Ctrl+V
+injection.py       clipboard paste and direct Unicode typing
+voice_commands.py  configured phrases mapped to shortcuts or executables
 hotkey.py          push-to-talk / toggle state machine on top of `keyboard`
 history.py         thread-safe transcription history (JSON, capped at 200)
 postprocessing.py  optional OpenAI-compatible text polish
@@ -282,10 +288,10 @@ for the original design rationale.
 
 ## Known limitations
 
-- **Clipboard is overwritten** on each transcription (restore is planned).
+- **Paste mode** overwrites the clipboard. **Type mode** leaves it alone and
+  sends Enter for line breaks, which can submit a message in some apps.
 - **Global hotkey may need admin** on first run (Windows low-level keyboard
   hook); run elevated once if push-to-talk doesn't register.
-- **Antivirus warnings** about the `keyboard` library are false positives.
 - **Single instance** — a named mutex prevents a second copy; quit from the tray.
 
 ---
