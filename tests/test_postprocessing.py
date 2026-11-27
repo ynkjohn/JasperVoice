@@ -12,7 +12,7 @@ from jaspervoice.postprocessing import (
     PostProcessResult,
     OUTPUT_MODES,
     DEFAULT_OUTPUT_MODE,
-    PROMPTS,
+    default_system_prompt,
     _build_url,
     is_valid_env_var_name,
 )
@@ -115,7 +115,7 @@ def test_opencode_raw_mode_does_not_call_api():
 def test_opencode_clean_mode_uses_fast_model():
     def check(payload, headers):
         assert payload["model"] == "fast-model"
-        assert payload["messages"][0]["content"] == PROMPTS["clean"]
+        assert payload["messages"][0]["content"] == default_system_prompt("clean")
         assert payload["messages"][1]["content"] == "hello world"
         assert payload["temperature"] == 0.2
         assert headers["Authorization"] == "Bearer test-key-123"
@@ -139,7 +139,7 @@ def test_opencode_clean_mode_uses_fast_model():
 def test_opencode_docs_mode_uses_smart_model():
     def check(payload, headers):
         assert payload["model"] == "smart-model"
-        assert payload["messages"][0]["content"] == PROMPTS["docs"]
+        assert payload["messages"][0]["content"] == default_system_prompt("docs")
 
     pp = OpenCodePostProcessor(
         base_url="https://api.example.com",
@@ -173,7 +173,7 @@ def test_opencode_prompt_mode_uses_fast_model():
 def test_opencode_commit_mode_uses_fast_model():
     def check(payload, headers):
         assert payload["model"] == "fast-model"
-        assert payload["messages"][0]["content"] == PROMPTS["commit"]
+        assert payload["messages"][0]["content"] == default_system_prompt("commit")
 
     pp = OpenCodePostProcessor(
         base_url="https://api.example.com",
@@ -190,7 +190,7 @@ def test_opencode_commit_mode_uses_fast_model():
 def test_opencode_command_mode_uses_fast_model():
     def check(payload, headers):
         assert payload["model"] == "fast-model"
-        assert payload["messages"][0]["content"] == PROMPTS["command"]
+        assert payload["messages"][0]["content"] == default_system_prompt("command")
 
     pp = OpenCodePostProcessor(
         base_url="https://api.example.com",
@@ -633,3 +633,33 @@ def test_runtime_403_message_nudges_detected_alt_env_var(monkeypatch):
         pp.process("hello", mode="clean")
     msg = str(exc_info.value)
     assert "OPENAI_API_KEY" in msg
+
+
+def test_clean_prompt_uses_detected_german_language():
+    def check(payload, headers):
+        system, user = payload["messages"]
+        assert "Keep the original language" in system["content"]
+        assert "Whisper language code: de." in system["content"]
+        assert user["content"] == "Guten morgen"
+
+    pp = OpenCodePostProcessor(
+        base_url="http://localhost:1234/v1",
+        request_fn=_fake_request_fn(payload_check=check, response_json={
+            "choices": [{"message": {"content": "Guten Morgen."}}]
+        }),
+    )
+    assert pp.process("Guten morgen", mode="clean", language="de").text == "Guten Morgen."
+
+
+def test_custom_system_prompt_only_replaces_its_own_style():
+    prompts = []
+    pp = OpenCodePostProcessor(
+        base_url="http://localhost:1234/v1",
+        custom_prompts={"clean": "Use Swiss German spelling."},
+        request_fn=_fake_request_fn(payload_check=lambda payload, _: prompts.append(
+            payload["messages"][0]["content"]
+        )),
+    )
+    pp.process("Grüezi", mode="clean", language="de")
+    pp.process("Grüezi", mode="docs", language="de")
+    assert prompts == ["Use Swiss German spelling.", default_system_prompt("docs", "de")]

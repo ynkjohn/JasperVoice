@@ -10,7 +10,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from .postprocessing import OUTPUT_MODES, is_valid_env_var_name
+from .postprocessing import OUTPUT_MODES, PROMPTS, is_valid_env_var_name
+from .voice_commands import parse_voice_commands
 
 log = logging.getLogger(__name__)
 
@@ -26,10 +27,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "compute_type": "int8",
     "device": "auto",
     "sample_rate": 16000,
+    "injection_mode": "paste",
     "paste_delay_ms": 15,
+    "voice_commands_enabled": False,
+    "voice_commands": [],
     "min_recording_ms": 200,
     "output_mode": "raw",
     "post_processing_enabled": False,
+    "polish_custom_prompts": {},
     "post_processing_provider": "none",
     "opencode_base_url": "",
     "opencode_api_key_env": "OPENCODE_API_KEY",
@@ -54,9 +59,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "warmup_on_launch": True,
 }
 
+LANGUAGES = [
+    ("pt", "Português"),
+    ("en", "English"),
+    ("es", "Español"),
+    ("de", "Deutsch"),
+    ("auto", "Auto-detect"),
+]
+
+
 VALID_PROVIDERS = {"none", "opencode"}
 
 VALID_HOTKEY_MODES = {"push_to_talk", "toggle"}
+VALID_INJECTION_MODES = ("paste", "type")
 
 VALID_OVERLAY_POSITIONS = {"top_left", "top_right", "bottom_left", "bottom_right"}
 VALID_SOUND_FEEDBACK = {"off", "subtle", "all"}
@@ -116,6 +131,9 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
         out["hotkey_mode"] = "push_to_talk"
     if not isinstance(out["language"], str) or not out["language"].strip():
         out["language"] = DEFAULT_CONFIG["language"]
+    if out.get("injection_mode") not in VALID_INJECTION_MODES:
+        log.warning("Invalid injection_mode %r, falling back to 'paste'", out.get("injection_mode"))
+        out["injection_mode"] = DEFAULT_CONFIG["injection_mode"]
     if not isinstance(out.get("paste_delay_ms"), int) or not (0 <= out["paste_delay_ms"] <= 200):
         log.warning("Invalid paste_delay_ms %r, falling back to %d", out.get("paste_delay_ms"), DEFAULT_CONFIG["paste_delay_ms"])
         out["paste_delay_ms"] = DEFAULT_CONFIG["paste_delay_ms"]
@@ -125,6 +143,12 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(out.get("output_mode"), str) or out["output_mode"] not in OUTPUT_MODES:
         log.warning("Invalid output_mode %r, falling back to %r", out.get("output_mode"), DEFAULT_CONFIG["output_mode"])
         out["output_mode"] = DEFAULT_CONFIG["output_mode"]
+    custom_prompts = out["polish_custom_prompts"]
+    out["polish_custom_prompts"] = {
+        mode: prompt.strip() for mode, prompt in custom_prompts.items()
+        if mode in PROMPTS and isinstance(prompt, str) and prompt.strip()
+    } if isinstance(custom_prompts, dict) else {}
+    out["voice_commands"] = [command.as_config() for command in parse_voice_commands(out["voice_commands"])]
     if not isinstance(out.get("post_processing_enabled"), bool):
         log.warning("Invalid post_processing_enabled %r, falling back to False", out.get("post_processing_enabled"))
         out["post_processing_enabled"] = False
@@ -177,7 +201,7 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
         log.warning("Invalid update_repo %r, falling back to default", out.get("update_repo"))
         out["update_repo"] = DEFAULT_CONFIG["update_repo"]
     for key in ("launch_at_login", "start_minimized", "show_overlay",
-                "noise_gate_enabled", "warmup_on_launch"):
+                "noise_gate_enabled", "warmup_on_launch", "voice_commands_enabled"):
         if not isinstance(out.get(key), bool):
             log.warning("Invalid %s %r, falling back to %r", key, out.get(key), DEFAULT_CONFIG[key])
             out[key] = DEFAULT_CONFIG[key]

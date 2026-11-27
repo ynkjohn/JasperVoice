@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import LANGUAGES  # re-exported for existing UI callers
 from .theme import COLORS
 
 log = logging.getLogger(__name__)
@@ -101,16 +102,6 @@ def qt_to_keyboard(seq: QKeySequence) -> str:
     # reverse of _TOKEN_TITLE, but .lower() works for every entry because
     # the canonical Qt names are the same words as the keyboard-lib tokens.
     return s.lower()
-
-
-# --- Languages ---
-
-LANGUAGES = [
-    ("pt", "Português"),
-    ("en", "English"),
-    ("es", "Español"),
-    ("auto", "Auto-detect"),
-]
 
 
 # --- Painted line glyphs (no icon fonts, no image assets) ---------------------

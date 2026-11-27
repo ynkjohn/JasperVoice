@@ -122,6 +122,19 @@ def test_paste_delay_above_range_falls_back(tmp_path, monkeypatch):
     assert cfg["paste_delay_ms"] == DEFAULT_CONFIG["paste_delay_ms"]
 
 
+def test_injection_mode_type_persists(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    save_config({"injection_mode": "type"})
+    assert load_config()["injection_mode"] == "type"
+
+
+def test_invalid_injection_mode_falls_back_to_paste(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    p = get_config_path()
+    p.write_text(json.dumps({"injection_mode": "speech"}), encoding="utf-8")
+    assert load_config()["injection_mode"] == "paste"
+
+
 def test_min_recording_below_range_falls_back(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     p = get_config_path()

@@ -42,6 +42,7 @@ from .theme import apply_theme
 from .transcription import Transcriber, TranscriberError
 from .tray import TrayController
 from .ui import SettingsWindow
+from .voice_commands import VoiceCommand, configured_voice_commands, normalize_phrase
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ class TranscriptionWorker(QObject):
     """Runs the (transcribe + post-process + inject) pipeline off the Qt event loop."""
 
     finished = Signal(str)     # injected text (or empty)
+    command_finished = Signal(str)
+    recover_text = Signal(str)  # save text in History if direct typing fails
     test_result = Signal(str)  # transcribed text for a test take (not injected)
     failed = Signal(str)       # error message
     state = Signal(str)        # state for the tray
@@ -72,10 +75,15 @@ class TranscriptionWorker(QObject):
         dictionary: Optional[DeveloperDictionary] = None,
         warmup: bool = True,
         noise_gate_enabled: bool = False,
+        *,
+        injection_mode: str = "paste",
+        voice_commands: Optional[dict[str, VoiceCommand]] = None,
     ):
         super().__init__()
         self._transcriber = transcriber
         self._paste_delay_ms = paste_delay_ms
+        self._injection_mode = injection_mode
+        self._voice_commands = voice_commands or {}
         self._postprocessor: PostProcessor = postprocessor or NoopPostProcessor()
         self._output_mode = output_mode
         self._post_processing_enabled = post_processing_enabled
@@ -94,7 +102,9 @@ class TranscriptionWorker(QObject):
         with self._cv:
             if self._stop:
                 return
-            self._pending = (audio, sample_rate, inject)
+            commands = self._voice_commands if inject else {}
+            window = injection.foreground_window() if commands else None
+            self._pending = (audio, sample_rate, inject, window, commands)
             self._cv.notify_all()
 
     def stop(self) -> None:
@@ -108,15 +118,15 @@ class TranscriptionWorker(QObject):
                 self._cv.wait()
             if self._stop:
                 return None
-            return self._pending
+            pending = self._pending
+            self._pending = None
+            return pending
 
     def run(self) -> None:
-        # Warm up the Whisper model as the worker thread's first action, before
-        # blocking on the task queue. This loads the model right after startup
-        # so the first dictation doesn't pay the ~2-5s model-load cost.
+        # Give an already queued take priority over optional startup warmup.
         with self._cv:
-            already_stopped = self._stop
-        if not already_stopped and self._warmup:
+            can_warm_up = not self._stop and self._pending is None
+        if self._warmup and can_warm_up:
             try:
                 self._transcriber._ensure_loaded()
                 log.info(
@@ -129,7 +139,7 @@ class TranscriptionWorker(QObject):
             pending = self._wait_for_task()
             if pending is None:
                 return
-            audio, sample_rate, inject = pending
+            audio, sample_rate, inject, window, commands = pending
             try:
                 self.state.emit("processing")
                 if self._noise_gate_enabled:
@@ -143,6 +153,17 @@ class TranscriptionWorker(QObject):
                     (self.finished if inject else self.test_result).emit("")
                     continue
 
+                key = normalize_phrase(raw_text) if commands else ""
+                command = commands.get(key)
+                if command is not None and self._voice_commands.get(key) == command:
+                    try:
+                        command.execute(window, injection.foreground_window())
+                    except (OSError, ValueError) as exc:
+                        self.failed.emit(f"Voice command failed: {exc}")
+                    else:
+                        self.command_finished.emit(command.phrase)
+                    continue
+
                 dict_text = raw_text
                 try:
                     dict_text = self._dictionary.apply(raw_text)
@@ -152,7 +173,9 @@ class TranscriptionWorker(QObject):
                 final_text = dict_text
                 if self._post_processing_enabled:
                     try:
-                        pp_result = self._postprocessor.process(dict_text, mode=self._output_mode)
+                        pp_result = self._postprocessor.process(
+                            dict_text, mode=self._output_mode, language=result.language
+                        )
                         final_text = pp_result.text
                     except PostProcessorError as e:
                         log.warning("Post-processing failed: %s. Falling back to dictionary text.", e)
@@ -160,7 +183,16 @@ class TranscriptionWorker(QObject):
                         log.warning("Post-processing unexpected error: %s. Falling back to dictionary text.", e)
 
                 if inject:
-                    injection.inject_text(final_text, settle_ms=self._paste_delay_ms)
+                    mode = self._injection_mode
+                    sent = injection.inject_text(
+                        final_text,
+                        settle_ms=self._paste_delay_ms,
+                        mode=mode,
+                    )
+                    if not sent and mode == "type":
+                        self.recover_text.emit(final_text)
+                        self.failed.emit("Could not type into the focused window. See History for the text.")
+                        continue
                     self.finished.emit(final_text)
                 else:
                     self.test_result.emit(final_text)
@@ -170,9 +202,6 @@ class TranscriptionWorker(QObject):
             except Exception as e:  # last-resort safety net
                 log.exception("Unexpected error")
                 self.failed.emit(f"Unexpected: {e}")
-            finally:
-                with self._cv:
-                    self._pending = None
 
 
 class App(QObject):
@@ -258,6 +287,7 @@ class App(QObject):
                 fast_model=cfg.get("opencode_fast_model", "DeepSeek V4 Flash"),
                 smart_model=cfg.get("opencode_smart_model", "Qwen3.7 Max"),
                 timeout_s=int(cfg.get("opencode_timeout_s", 20)),
+                custom_prompts=cfg.get("polish_custom_prompts", {}),
             )
         return NoopPostProcessor()
 
@@ -302,6 +332,7 @@ class App(QObject):
             return
         self._last_duration_s = duration
         if self._worker is not None:
+            self._set_state("processing")
             self._worker.submit(audio, int(self._cfg["sample_rate"]))
 
     def _on_cancel(self) -> None:
@@ -375,24 +406,31 @@ class App(QObject):
 
     # ----- Worker signals -----
     @Slot(str)
-    def _on_worker_finished(self, text: str) -> None:
-        self._busy = False
-        self._recording_start = None
-        # Show "Sent!" briefly before returning to idle
-        self._set_state("send")
+    def _save_transcript(self, text: str) -> None:
         if text:
             try:
                 self._history.add(text, duration_s=self._last_duration_s, mode=self._hotkey_mode)
             except Exception as e:
                 log.warning("Failed to add to history: %s", e)
+
+    def _show_worker_success(self, detail: str) -> None:
+        self._busy = False
+        self._recording_start = None
+        self._set_state("send")
         if self._tray:
-            if text:
-                self._tray.set_status_detail(f"Last: {text[:40]}{'…' if len(text) > 40 else ''}")
-            else:
-                self._tray.set_status_detail("(no speech detected)")
-        # Return to idle after 700ms
+            self._tray.set_status_detail(detail)
         if self._qt is not None:
             QTimer.singleShot(700, lambda: self._set_state("idle") if self._state_is("send") else None)
+
+    @Slot(str)
+    def _on_worker_finished(self, text: str) -> None:
+        self._save_transcript(text)
+        detail = f"Last: {text[:40]}{'…' if len(text) > 40 else ''}" if text else "(no speech detected)"
+        self._show_worker_success(detail)
+
+    @Slot(str)
+    def _on_worker_command(self, phrase: str) -> None:
+        self._show_worker_success(f"Command executed: {phrase}")
 
     @Slot(str)
     def _on_worker_failed(self, msg: str) -> None:
@@ -483,6 +521,8 @@ class App(QObject):
         self._worker = TranscriptionWorker(
             self._transcriber,
             paste_delay_ms=int(self._cfg.get("paste_delay_ms", 15)),
+            injection_mode=str(self._cfg.get("injection_mode", "paste")),
+            voice_commands=configured_voice_commands(self._cfg),
             postprocessor=self._build_postprocessor(self._cfg),
             output_mode=self._cfg.get("output_mode", "raw"),
             post_processing_enabled=bool(self._cfg.get("post_processing_enabled", False)),
@@ -493,6 +533,8 @@ class App(QObject):
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_worker_finished, Qt.ConnectionType.QueuedConnection)
+        self._worker.command_finished.connect(self._on_worker_command, Qt.ConnectionType.QueuedConnection)
+        self._worker.recover_text.connect(self._save_transcript, Qt.ConnectionType.QueuedConnection)
         self._worker.test_result.connect(self._on_worker_test_result, Qt.ConnectionType.QueuedConnection)
         self._worker.failed.connect(self._on_worker_failed, Qt.ConnectionType.QueuedConnection)
         self._worker.state.connect(self._on_worker_state, Qt.ConnectionType.QueuedConnection)
@@ -642,6 +684,8 @@ class App(QObject):
         # Update paste delay on the worker (cheap)
         if self._worker is not None:
             self._worker._paste_delay_ms = int(new_cfg.get("paste_delay_ms", 15))
+            self._worker._injection_mode = str(new_cfg.get("injection_mode", "paste"))
+            self._worker._voice_commands = configured_voice_commands(new_cfg)
             self._worker._dictionary = DeveloperDictionary(new_cfg.get("dictionary", []))
 
         # Update post-processing settings on the worker

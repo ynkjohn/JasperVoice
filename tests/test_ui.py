@@ -239,6 +239,22 @@ def test_paste_delay_and_min_recording_in_config(window):
     assert received[0]["min_recording_ms"] == 350
 
 
+def test_injection_mode_in_collect_values(window):
+    page = window.page("general")
+    page.injection_mode.set_current_key("type")
+    assert window._collect_values()["injection_mode"] == "type"
+
+
+def test_paste_delay_disabled_in_type_mode(window):
+    page = window.page("general")
+    page.injection_mode.set_current_key("type")
+    page._update_paste_delay_enabled()
+    assert not page.paste_delay.isEnabled()
+    page.injection_mode.set_current_key("paste")
+    page._update_paste_delay_enabled()
+    assert page.paste_delay.isEnabled()
+
+
 def test_hotkey_mode_in_collect_values(window):
     window.mode_seg.set_current_key("toggle")
     collected = window._collect_values()
@@ -779,3 +795,35 @@ def test_runtime_provider_failure_is_safe(window):
 def test_summary_shows_model_device_compute(window):
     assert "whisper small" in window._bar_summary.text()
     assert "int8" in window._bar_summary.text()
+
+
+def test_polish_prompt_edits_survive_style_changes_and_restore_default(window):
+    polish = window.page("polish")
+    polish.enabled.setChecked(True)
+    polish.custom_prompt.setPlainText("Keep the technical terms.\nPreserve German.")
+    polish.mode_seg.set_current_key("docs")
+    assert polish.custom_prompt.toPlainText() == ""
+    polish.custom_prompt.setPlainText("Format paragraphs.")
+    polish.mode_seg.set_current_key("clean")
+    assert polish.custom_prompt.toPlainText() == "Keep the technical terms.\nPreserve German."
+    window._on_apply()
+    assert window.saved_cfg["polish_custom_prompts"]["docs"] == "Format paragraphs."
+    polish.custom_prompt_reset.click()
+    window._on_apply()
+    assert window.saved_cfg["polish_custom_prompts"] == {"docs": "Format paragraphs."}
+
+
+def test_voice_commands_settings_load_and_remove(window):
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["voice_commands_enabled"] = True
+    config["voice_commands"] = [{"phrase": "Undo", "action": "shortcut", "target": "ctrl+z"}]
+    window.update_config(config)
+    page = window.page("commands")
+    assert page.enabled.isChecked()
+    assert page.table.item(0, 0).text() == "Undo"
+    page.table.selectRow(0)
+    page.remove.click()
+    window._on_apply()
+    assert window.saved_cfg["voice_commands"] == []
+    assert window.saved_cfg["voice_commands_enabled"] is True
+    assert window.lang_combo.findData("de") >= 0
