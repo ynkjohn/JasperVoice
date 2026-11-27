@@ -13,17 +13,9 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from .config import get_app_dir, load_config, save_config
+from .config import LANGUAGES, get_app_dir, load_config, save_config
 
 log = logging.getLogger(__name__)
-
-LANGUAGES = [
-    ("pt", "Português"),
-    ("en", "English"),
-    ("es", "Español"),
-    ("auto", "Auto-detect"),
-]
-
 
 def _build_icon(color: QColor) -> QIcon:
     """Render a 32x32 round dot icon at runtime — no asset files needed."""
