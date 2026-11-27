@@ -110,8 +110,10 @@ while History and Dictionary changes are saved immediately.
 
 No admin, no terminal. Grab the latest `JasperVoice-Setup-<version>.exe` from the
 [**Releases**](https://github.com/ynkjohn/JasperVoice/releases) page and run it.
-JasperVoice starts in the system tray. It checks for new releases on startup by
-default and lets you choose when to download and install an update.
+Open JasperVoice from Start or double-click `JasperVoice.exe` to bring its window
+forward. Closing the window keeps dictation available in the system tray.
+**General** controls what happens at sign-in. To launch directly into the tray,
+use the `--background` argument. Update checks run on startup by default.
 
 ### Run from source
 
@@ -122,7 +124,7 @@ python -m venv .venv
 ```
 
 First run downloads the Whisper `small` model (~460 MB) to
-`%APPDATA%\JasperVoice\models\`. The app starts in the tray; the default hotkey
+`%APPDATA%\JasperVoice\models\`. The app opens its main window. The default hotkey
 is `Ctrl+Shift+Space`.
 
 ---
@@ -178,8 +180,11 @@ Refine dictation through **any OpenAI-compatible API** after Whisper — local
 (Ollama, LM Studio, vLLM) or remote (OpenRouter, OpenCode, cloud). The **AI
 Polish** page configures the provider, endpoint, key env-var name, and output
 style. The built-in prompts ask the model to preserve the original language.
-You can set a custom system prompt for each style. A **Test** button diagnoses
-your setup locally, and **Fetch models** queries the provider's `/v1/models`.
+Use **Fetch models** to read the endpoint's model list and **Preview Polish**
+to send a sample through the selected style and system prompt before applying
+changes. **Check key** inspects the Windows environment. Leave the key field
+empty for a local server that accepts unauthenticated requests. If the endpoint
+fails during dictation, JasperVoice keeps the transcription.
 
 ```json
 {
@@ -220,14 +225,15 @@ with `auto`, if CUDA loads but a take fails at runtime, the app retries the dict
 ```powershell
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 
-# one-folder standalone build (boots to tray, no console)
+# one-folder standalone build (windowed)
 .venv\Scripts\pyinstaller.exe jaspervoice.spec --noconfirm
 
 # full release: PyInstaller + Inno Setup installer + checksums
 .\scripts\build_release.ps1
 ```
 
-`build_release.ps1` writes two artifacts to `dist\installer\`:
+`build_release.ps1` writes two artifacts to `dist\installer\` by default.
+Use `-OutputRoot dist\1.2.0` to keep the new artifacts alongside an older build.
 
 - `JasperVoice-Setup-<version>.exe` — the per-user installer.
 - `SHA256SUMS` — the checksum the in-app updater verifies before applying.
@@ -241,6 +247,10 @@ Use **Check for updates…** in the tray. If a newer release is available,
 choose **Download & Update** to fetch the installer and verify its SHA-256.
 After verification, choose **Update now** to replace the installed files
 and relaunch JasperVoice.
+The app can use the public release page if the GitHub API is temporarily
+unavailable or rate-limited. For an offline install, put the release's
+`SHA256SUMS` next to the downloaded setup and choose **Updates → Install from
+file**.
 
 ---
 

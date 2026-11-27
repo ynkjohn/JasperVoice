@@ -87,8 +87,8 @@ def test_roundtrip():
 
 def test_window_title_and_size(window):
     assert window.windowTitle() == "JasperVoice"
-    assert window.minimumWidth() == 900
-    assert window.minimumHeight() == 600
+    assert window.minimumWidth() == 860
+    assert window.minimumHeight() == 520
 
 
 def test_all_pages_exist(window):
@@ -319,19 +319,19 @@ def test_polish_enable_selects_provider_and_api_mode(window):
     assert page.mode_seg.current_key() == "clean"
 
 
-def test_polish_collect_normalizes_enabled_raw_disabled_provider(window):
+def test_polish_collect_preserves_raw_with_provider_enabled(window):
     page = window.page("polish")
     page.enabled.setChecked(True)
     page.provider_combo.setCurrentIndex(0)
     page.mode_seg.set_current_key("raw")
     collected = window._collect_values()
     assert collected["post_processing_provider"] == "opencode"
-    assert collected["output_mode"] == "clean"
+    assert collected["output_mode"] == "raw"
 
 
-def test_polish_api_key_env_blank_falls_back(window):
+def test_polish_api_key_env_blank_omits_authentication(window):
     window.page("polish").api_key_env.setText("   ")
-    assert window._collect_values()["opencode_api_key_env"] == DEFAULT_CONFIG["opencode_api_key_env"]
+    assert window._collect_values()["opencode_api_key_env"] == ""
 
 
 def test_polish_raw_api_key_env_falls_back(window):

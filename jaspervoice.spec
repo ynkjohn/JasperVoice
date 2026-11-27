@@ -105,7 +105,12 @@ fw_datas = collect_data_files("faster_whisper", includes=["assets/*"])
 
 # Ship the brand icon so the tray/window can load it at runtime via
 # jaspervoice.assets.icon_path() (it resolves sys._MEIPASS/assets).
-app_datas = [("assets/icon.ico", "assets"), ("LICENSE", ".")]
+app_datas = [
+    ("assets/icon.ico", "assets"),
+    ("assets/chevron-down.svg", "assets"),
+    ("assets/chevron-up.svg", "assets"),
+    ("LICENSE", "."),
+]
 
 # CTranslate2 and onnxruntime ship native libs that PyInstaller's static
 # analysis can miss; collect them explicitly.

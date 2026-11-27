@@ -8,7 +8,7 @@ Design goals:
 - **Versioned artifacts only.** We query the GitHub *Releases* API and download
   the published installer asset (``JasperVoice-Setup-x.y.z.exe``). We never
   fetch raw source, never run ``git``, and never execute remote code beyond the
-  signed/verified installer the user chose to install.
+  checksum-verified installer the user chose to install.
 - **Integrity checked.** Before an installer is ever launched its SHA-256 is
   verified against the ``SHA256SUMS`` asset published alongside it. A mismatch
   aborts the update.
@@ -52,10 +52,12 @@ DEFAULT_REPO = "ynkjohn/JasperVoice"
 # Asset naming convention produced by scripts/build_release.ps1:
 #   JasperVoice-Setup-<version>.exe   (the Inno Setup installer)
 #   SHA256SUMS                        (one line per artifact: "<hex>  <name>")
-INSTALLER_RE = re.compile(r"^JasperVoice-Setup-.*\.exe$", re.IGNORECASE)
 SHASUMS_NAME = "SHA256SUMS"
 
 GITHUB_API = "https://api.github.com/repos/{repo}/releases/latest"
+GITHUB_RELEASES = "https://github.com/{repo}/releases"
+_REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_STABLE_TAG = re.compile(r"v?(\d+\.\d+\.\d+)", re.IGNORECASE)
 
 # A small, honest User-Agent (GitHub's API rejects requests without one). This
 # is NOT telemetry — it carries no user data, only the app name + version that
@@ -143,7 +145,7 @@ def _parse_shasums(text: str) -> dict[str, str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        parts = line.split()
+        parts = line.split(maxsplit=1)
         if len(parts) < 2:
             continue
         digest = parts[0].lower()
@@ -152,6 +154,38 @@ def _parse_shasums(text: str) -> dict[str, str]:
         if re.fullmatch(r"[0-9a-f]{64}", digest):
             out[name] = digest
     return out
+
+
+def _asset_checksum(url: str, name: str, timeout_s: int) -> str | None:
+    if not url:
+        return None
+    try:
+        return _parse_shasums(_http_get(url, timeout_s, "text/plain").decode("utf-8-sig")).get(name)
+    except (UpdateError, UnicodeDecodeError) as e:
+        log.warning("Could not read the published checksum: %s", e)
+        return None
+
+
+def _check_public_release(repo: str, timeout_s: int, current: str) -> UpdateInfo | None:
+    releases = GITHUB_RELEASES.format(repo=repo)
+    req = urllib.request.Request(f"{releases}/latest", headers={"User-Agent": _USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as response:
+            url = response.geturl()
+    except (URLError, TimeoutError, OSError) as e:
+        raise UpdateError(f"Could not reach the public GitHub release page: {e}") from e
+
+    prefix, _, tag = url.rpartition("/tag/")
+    match = _STABLE_TAG.fullmatch(tag)
+    if prefix.casefold() != releases.casefold() or not match:
+        raise UpdateError("GitHub did not return a stable release with a version tag.")
+    version = match[1]
+    if not is_newer(version, current):
+        return None
+    name = f"JasperVoice-Setup-{version}.exe"
+    assets = f"{releases}/download/{tag}"
+    checksum = _asset_checksum(f"{assets}/{SHASUMS_NAME}", name, timeout_s)
+    return UpdateInfo(version, tag, name, f"{assets}/{name}", 0, checksum, "")
 
 
 def check_for_update(
@@ -167,18 +201,26 @@ def check_for_update(
     running. This function performs NO writes and downloads nothing heavy
     (only the small JSON + the tiny SHA256SUMS text).
     """
-    url = GITHUB_API.format(repo=repo)
-    raw = _http_get(url, timeout_s)
+    if not _REPO_RE.fullmatch(repo) or any(part in (".", "..") for part in repo.split("/")):
+        raise UpdateError("Use a GitHub repository in owner/repo format.")
+    try:
+        raw = _http_get(GITHUB_API.format(repo=repo), timeout_s)
+    except UpdateError as api_error:
+        log.info("Release API unavailable; trying the public release page: %s", api_error)
+        try:
+            return _check_public_release(repo, timeout_s, current)
+        except UpdateError as page_error:
+            raise UpdateError(f"{page_error}\n{api_error}") from page_error
     try:
         data = json.loads(raw.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise UpdateError(f"Could not parse GitHub release JSON: {e}") from e
 
-    tag = str(data.get("tag_name") or "").strip()
-    if not tag:
-        raise UpdateError("Latest release has no tag_name")
-
-    remote_version = normalize_version(tag)
+    tag = str(data.get("tag_name") or "").strip() if isinstance(data, dict) else ""
+    match = _STABLE_TAG.fullmatch(tag)
+    if not match:
+        raise UpdateError("GitHub did not return a stable release with a version tag.")
+    remote_version = match[1]
     if not is_newer(remote_version, current):
         log.info("Up to date (local=%s, latest=%s)", current, remote_version)
         return None
@@ -189,29 +231,24 @@ def check_for_update(
 
     installer = None
     shasums_url = None
+    installer_name = f"JasperVoice-Setup-{remote_version}.exe"
     for a in assets:
+        if not isinstance(a, dict):
+            continue
         name = str(a.get("name") or "")
         dl = str(a.get("browser_download_url") or "")
-        if INSTALLER_RE.match(name):
-            installer = (name, dl, int(a.get("size") or 0))
+        if name == installer_name and dl:
+            size = a.get("size")
+            installer = (name, dl, size if isinstance(size, int) else 0)
         elif name == SHASUMS_NAME:
             shasums_url = dl
 
     if installer is None:
         raise UpdateError(
-            f"Release {tag} has no installer asset matching {INSTALLER_RE.pattern}"
+            f"Release {tag} has no {installer_name} asset."
         )
 
-    sha256 = None
-    if shasums_url:
-        try:
-            sums_text = _http_get(shasums_url, timeout_s, accept="text/plain").decode("utf-8")
-            sha256 = _parse_shasums(sums_text).get(installer[0])
-        except UpdateError as e:
-            # Missing/unreadable SHA256SUMS is not fatal at *check* time; we just
-            # won't have a digest to verify. download_installer enforces that a
-            # digest exists before launching, so this stays safe.
-            log.warning("Could not fetch SHA256SUMS for %s: %s", tag, e)
+    sha256 = _asset_checksum(shasums_url or "", installer[0], timeout_s)
 
     return UpdateInfo(
         version=remote_version,
@@ -252,7 +289,7 @@ def download_installer(
     info: UpdateInfo,
     timeout_s: int = 60,
     progress: Optional[Callable[[int, int], None]] = None,
-    require_sha256: bool = True,
+    cancelled: Optional[Callable[[], bool]] = None,
 ) -> Path:
     """Download the installer asset to the updates dir and verify its SHA-256.
 
@@ -260,11 +297,8 @@ def download_installer(
     failure (network, integrity mismatch, missing digest). The partial file is
     always cleaned up on failure so a retry starts clean.
 
-    ``require_sha256``: when True (default) an update with no known digest is
-    refused. Set False only for explicit, user-driven flows where the user has
-    accepted the risk.
     """
-    if require_sha256 and not info.sha256:
+    if not info.sha256:
         raise UpdateError(
             "Refusing to download: no SHA256SUMS entry found for "
             f"{info.asset_name}. Cannot verify integrity."
@@ -272,30 +306,31 @@ def download_installer(
 
     dest = updates_dir() / info.asset_name
     # Stage to a temp file in the same dir, then atomically move on success.
-    fd, tmp_name = tempfile.mkstemp(prefix=".dl-", suffix=".part", dir=str(dest.parent))
-    tmp = Path(tmp_name)
     req = urllib.request.Request(
         info.asset_url,
         headers={"User-Agent": _USER_AGENT, "Accept": "application/octet-stream"},
         method="GET",
     )
     ctx = ssl.create_default_context()
+    fd, tmp_name = tempfile.mkstemp(prefix=".dl-", suffix=".part", dir=str(dest.parent))
+    tmp = Path(tmp_name)
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s, context=ctx) as resp:
+        with os.fdopen(fd, "wb") as out, urllib.request.urlopen(req, timeout=timeout_s, context=ctx) as resp:
             total = int(resp.headers.get("Content-Length") or info.asset_size or 0)
             got = 0
-            with os.fdopen(fd, "wb") as out:
-                while True:
-                    chunk = resp.read(_CHUNK)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    got += len(chunk)
-                    if progress:
-                        try:
-                            progress(got, total)
-                        except Exception:  # progress callbacks must never abort a download
-                            pass
+            while chunk := resp.read(_CHUNK):
+                if cancelled and cancelled():
+                    raise UpdateError("Download cancelled.")
+                out.write(chunk)
+                got += len(chunk)
+                if progress:
+                    try:
+                        progress(got, total)
+                    except Exception:  # progress callbacks must never abort a download
+                        pass
+    except UpdateError:
+        _silent_unlink(tmp)
+        raise
     except (HTTPError, URLError, TimeoutError, OSError) as e:
         _silent_unlink(tmp)
         raise UpdateError(f"Download failed: {e}") from e
@@ -329,8 +364,8 @@ def download_installer(
 def stage_local_installer(path: str | Path, expected_sha256: Optional[str] = None) -> Path:
     """Offline path: validate a user-provided installer file and return it.
 
-    Verifies the file exists, looks like a JasperVoice installer, and — if a
-    digest is supplied — that the SHA-256 matches. Does NO network access. The
+    Verifies the file exists and matches the required SHA-256 from the caller
+    or the adjacent SHA256SUMS. Does NO network access. The
     file is used in place (not copied) so a USB-stick / network-share install
     works without extra disk churn.
     """
@@ -339,17 +374,29 @@ def stage_local_installer(path: str | Path, expected_sha256: Optional[str] = Non
         raise UpdateError(f"Installer not found: {p}")
     if p.suffix.lower() != ".exe":
         raise UpdateError(f"Not an .exe installer: {p.name}")
-    if expected_sha256:
+    if expected_sha256 is None:
+        try:
+            sums = p.with_name(SHASUMS_NAME).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError) as e:
+            raise UpdateError("Place the release's SHA256SUMS file beside the installer.") from e
+        expected_sha256 = _parse_shasums(sums).get(p.name)
+    if not expected_sha256:
+        raise UpdateError(f"SHA256SUMS has no valid entry for {p.name}.")
+    try:
         if not verify_sha256(p, expected_sha256):
             raise UpdateError(
                 "SHA-256 mismatch on the local installer. Refusing to run it."
             )
+    except OSError as e:
+        raise UpdateError(f"Could not read installer: {e}") from e
     return p
 
 
 # --- launch ----------------------------------------------------------------
 
-def launch_installer(installer: str | Path, silent: bool = False) -> None:
+def launch_installer(
+    installer: str | Path, silent: bool = False, *, expected_sha256: str | None = None
+) -> None:
     """Launch the installer and let it take over the upgrade.
 
     The Inno Setup installer is configured with ``CloseApplications`` +
@@ -364,6 +411,7 @@ def launch_installer(installer: str | Path, silent: bool = False) -> None:
     installer = str(installer)
     if not os.path.isfile(installer):
         raise UpdateError(f"Installer missing at launch time: {installer}")
+    installer = str(stage_local_installer(installer, expected_sha256).resolve())
     args = [installer]
     if silent:
         # /VERYSILENT hides the installer UI completely; the custom flag lets
@@ -376,6 +424,9 @@ def launch_installer(installer: str | Path, silent: bool = False) -> None:
             "/RestartApplications",
             "/JasperVoiceAutoLaunch",
         ]
+    from .single_instance import release_active
+
+    guard = release_active()
     try:
         # Detached so the installer outlives this process when we quit. On
         # Windows, DETACHED_PROCESS + no wait lets the wizard run independently.
@@ -384,6 +435,8 @@ def launch_installer(installer: str | Path, silent: bool = False) -> None:
             creationflags = getattr(subprocess, "DETACHED_PROCESS", 0)
         subprocess.Popen(args, close_fds=True, creationflags=creationflags)
     except OSError as e:
+        if guard is not None:
+            guard.acquire()
         raise UpdateError(f"Could not launch installer: {e}") from e
 
 

@@ -37,7 +37,7 @@ _ERROR_ALREADY_EXISTS = 183
 _active_instance: "Optional[SingleInstance]" = None
 
 
-def release_active() -> None:
+def release_active() -> Optional[SingleInstance]:
     """Release the process's single-instance mutex, if one is held.
 
     Safe to call multiple times and when no guard was ever acquired. Used right
@@ -46,6 +46,7 @@ def release_active() -> None:
     guard = _active_instance
     if guard is not None:
         guard.release()
+    return guard
 
 
 class SingleInstance:
@@ -88,6 +89,7 @@ class SingleInstance:
                 wintypes.BOOL,
                 wintypes.LPCWSTR,
             ]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
             handle = kernel32.CreateMutexW(None, False, self._name)
             last_error = ctypes.get_last_error()
             if not handle:
@@ -122,7 +124,11 @@ class SingleInstance:
             try:
                 import ctypes
 
-                ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(self._handle)
+                from ctypes import wintypes
+
+                close = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+                close.argtypes = [wintypes.HANDLE]
+                close(self._handle)
             except Exception:
                 pass
         self._handle = None

@@ -27,7 +27,8 @@ import logging
 from copy import deepcopy
 from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -69,9 +70,9 @@ WINDOW_STATES = {
 }
 
 NAV_GROUPS = [
-    ("WORKSPACE", ["overview", "history", "dictionary"]),
-    ("CONFIGURE", ["general", "audio", "model", "polish", "commands", "updates"]),
-    ("SYSTEM", ["diagnostics"]),
+    ("Workspace", ["overview", "history", "dictionary"]),
+    ("Settings", ["general", "audio", "model", "polish", "commands"]),
+    ("System", ["updates", "diagnostics"]),
 ]
 
 # page id -> painted glyph for the sidebar
@@ -83,7 +84,7 @@ NAV_GLYPHS = {
     "audio": "mic",
     "model": "chip",
     "polish": "spark",
-    "commands": "sliders",
+    "commands": "command",
     "updates": "download",
     "diagnostics": "pulse",
 }
@@ -101,8 +102,8 @@ class SettingsWindow(QMainWindow):
     def __init__(self, cfg: dict, history=None, parent: Optional[QObject] = None):
         super().__init__(parent)
         self.setWindowTitle("JasperVoice")
-        self.setMinimumSize(900, 600)
-        self.resize(1120, 720)
+        self.setMinimumSize(860, 520)
+        self.resize(1100, 720)
 
         self._cfg = deepcopy(cfg)
         self._history = history
@@ -111,6 +112,7 @@ class SettingsWindow(QMainWindow):
         self._runtime_provider: Optional[Callable[[], dict]] = None
         self._update_dialog = None
         self._meter_paused = False
+        self._meter_suspended = False
 
         self.mic_source = MicLevelSource(self)
 
@@ -137,6 +139,10 @@ class SettingsWindow(QMainWindow):
     def page(self, page_id: str) -> Optional[BasePage]:
         return self._pages.get(page_id)
 
+    @property
+    def meter_paused(self) -> bool:
+        return self._meter_paused
+
     def set_runtime_provider(self, provider: Callable[[], dict]) -> None:
         """`provider` is called on the UI thread and returns live app info,
         e.g. {"resolved_device": "cuda", "model_loaded": True, "last_duration_s": 3.2}."""
@@ -160,6 +166,10 @@ class SettingsWindow(QMainWindow):
         if overview is not None:
             overview.set_test_result(text)
 
+    def refresh_history(self) -> None:
+        if self.isVisible() and self._current_page_id in ("overview", "history"):
+            self._pages[self._current_page_id].on_shown()
+
     def persist_config_now(self) -> None:
         """Persist self._cfg immediately (Dictionary page edits) and notify the app."""
         cfg_mod.save_config(self._cfg)
@@ -176,13 +186,19 @@ class SettingsWindow(QMainWindow):
                 except Exception:
                     pass
         self.mic_source.stop()
+        if self._update_dialog is not None:
+            self._update_dialog.shutdown()
 
     def open_update_dialog(self, repo: str) -> None:
-        dlg = UpdateDialog(repo=repo, parent=self)
+        dlg = self._update_dialog
+        if dlg is None or (not dlg.isVisible() and dlg._thread is None):
+            if dlg is not None:
+                dlg.deleteLater()
+            dlg = UpdateDialog(repo=repo, parent=self)
+            self._update_dialog = dlg
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
-        self._update_dialog = dlg  # keep a reference
 
     # --- Construction ---
 
@@ -231,37 +247,48 @@ class SettingsWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         side = QWidget()
         side.setObjectName("sideBar")
-        side.setFixedWidth(244)
+        side.setFixedWidth(206)
         box = QVBoxLayout(side)
-        box.setContentsMargins(0, 20, 0, 16)
+        box.setContentsMargins(12, 22, 12, 16)
         box.setSpacing(0)
 
-        brand = QVBoxLayout()
-        brand.setContentsMargins(16, 0, 16, 14)
-        brand.setSpacing(3)
-        name = QLabel("JASPERVOICE")
+        brand = QHBoxLayout()
+        brand.setContentsMargins(8, 0, 8, 18)
+        brand.setSpacing(9)
+        mark = QLabel()
+        mark.setPixmap(QApplication.windowIcon().pixmap(23, 23))
+        brand.addWidget(mark)
+        name = QLabel("JasperVoice")
         name.setProperty("role", "brandname")
-        brand.addWidget(name)
-        sub = QLabel(f"Offline dictation · v{__version__}")
-        sub.setProperty("role", "brandsub")
-        brand.addWidget(sub)
+        brand.addWidget(name, 1)
         box.addLayout(brand)
 
         search_wrap = QHBoxLayout()
-        search_wrap.setContentsMargins(14, 0, 14, 6)
+        search_wrap.setContentsMargins(0, 0, 0, 7)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Search settings…")
+        self.search_edit.setPlaceholderText("Search settings")
+        self.search_edit.setToolTip("Search settings (Ctrl+F)")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setAccessibleName("Search settings")
         self.search_edit.textChanged.connect(self._apply_search)
         self.search_edit.returnPressed.connect(self._go_to_first_match)
         search_wrap.addWidget(self.search_edit)
         box.addLayout(search_wrap)
+        shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
+        shortcut.activated.connect(self.search_edit.setFocus)
+
+        nav_scroll = QScrollArea()
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        nav = QWidget()
+        nav_box = QVBoxLayout(nav)
+        nav_box.setContentsMargins(0, 0, 0, 0)
+        nav_box.setSpacing(2)
 
         for group_title, page_ids in NAV_GROUPS:
             lbl = QLabel(group_title)
             lbl.setProperty("role", "navgroup")
-            box.addWidget(lbl)
+            nav_box.addWidget(lbl)
             self._nav_group_labels.append((lbl, page_ids))
             for pid in page_ids:
                 cls = next(c for c in PAGE_CLASSES if c.page_id == pid)
@@ -273,27 +300,17 @@ class SettingsWindow(QMainWindow):
                     btn.setIcon(glyph_icon(glyph))
                 btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn.clicked.connect(lambda _=False, p=pid: self.show_page(p))
-                box.addWidget(btn)
+                nav_box.addWidget(btn)
                 self._nav_buttons[pid] = btn
 
-        box.addStretch(1)
+        nav_box.addStretch(1)
+        nav_scroll.setWidget(nav)
+        box.addWidget(nav_scroll, 1)
 
-        status = QVBoxLayout()
-        status.setContentsMargins(16, 10, 16, 0)
-        status.setSpacing(4)
-        lamp_row = QHBoxLayout()
-        lamp_row.setSpacing(6)
-        self._side_lamp = QLabel("")
-        self._side_lamp.setProperty("role", "statelamp")
-        lamp_row.addWidget(self._side_lamp, 0)
-        self._side_state = QLabel("READY")
-        lamp_row.addWidget(self._side_state, 1)
-        status.addLayout(lamp_row)
-        self._side_summary = QLabel("")
-        self._side_summary.setProperty("role", "brandsub")
-        self._side_summary.setWordWrap(True)
-        status.addWidget(self._side_summary)
-        box.addLayout(status)
+        version = QLabel(f"Version {__version__}")
+        version.setProperty("role", "brandsub")
+        version.setContentsMargins(8, 8, 0, 0)
+        box.addWidget(version)
         return side
 
     @staticmethod
@@ -460,18 +477,18 @@ class SettingsWindow(QMainWindow):
 
     def set_app_state(self, state: str) -> None:
         label, color = WINDOW_STATES.get(state, WINDOW_STATES["idle"])
-        for lamp in (self._side_lamp, self._bar_lamp):
-            lamp.setStyleSheet(f"background-color: {color}; border-radius: 5px;")
-        self._side_state.setText(label)
+        self._bar_lamp.setStyleSheet(f"background-color: {color}; border-radius: 5px;")
         self._bar_state.setText(label)
         self._refresh_summary()
+        if state != "recording" and self._meter_suspended:
+            self._meter_suspended = False
+            self._update_mic_state()
 
     def _refresh_summary(self) -> None:
         summary = (
             f"whisper {self._cfg.get('model_size', '?')} · "
             f"{self._cfg.get('device', '?')} · {self._cfg.get('compute_type', '?')}"
         )
-        self._side_summary.setText(summary)
         self._bar_summary.setText(summary)
         info = self.runtime_info()
         last = info.get("last_duration_s")
@@ -505,12 +522,18 @@ class SettingsWindow(QMainWindow):
         self.mic_source.stop()
         self._update_mic_state()
 
+    def suspend_mic_meter(self) -> None:
+        self._meter_suspended = True
+        self._update_mic_state()
+
     def _update_mic_state(self) -> None:
         # The meter opens a real input stream; never auto-start it headless
-        # (offscreen platform = tests/CI), only on explicit user resume.
+        # (offscreen platform = tests/CI).
         want = (
             self.isVisible()
+            and not self.isMinimized()
             and not self._meter_paused
+            and not self._meter_suspended
             and self._current_page_id in ("overview", "audio")
             and QApplication.platformName() != "offscreen"
         )
@@ -520,6 +543,9 @@ class SettingsWindow(QMainWindow):
             self.mic_source.start(device)
         elif not want and self.mic_source.is_running:
             self.mic_source.stop()
+        if not want:
+            status = "Paused during dictation" if self._meter_suspended else "Mic check paused"
+            self.mic_source.status.emit(status)
 
     # --- Window lifecycle ---
 
@@ -531,6 +557,11 @@ class SettingsWindow(QMainWindow):
     def hideEvent(self, event) -> None:  # noqa: N802
         super().hideEvent(event)
         self._update_mic_state()
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._update_mic_state()
 
     def closeEvent(self, event) -> None:  # noqa: ARG002, N802
         # Hide instead of closing. App keeps running in the tray.
@@ -590,7 +621,8 @@ class _DownloadWorker(QObject):
 
         try:
             path = updater.download_installer(
-                self._info, progress=lambda g, t: self.progress.emit(g, t)
+                self._info, timeout_s=15, progress=lambda g, t: self.progress.emit(g, t),
+                cancelled=QThread.currentThread().isInterruptionRequested,
             )
             self.done.emit(str(path))
         except updater.UpdateError as e:
@@ -634,6 +666,7 @@ class UpdateDialog(QMainWindow):
 
         self._notes = QLabel("")
         self._notes.setWordWrap(True)
+        self._notes.setTextFormat(Qt.TextFormat.PlainText)
         self._notes.setProperty("role", "muted")
         self._notes.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         box.addWidget(self._notes)
@@ -662,7 +695,7 @@ class UpdateDialog(QMainWindow):
         self._thread = QThread()
         self._worker = _CheckWorker(self._repo)
         self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
+        self._thread.started.connect(self._worker.run, Qt.ConnectionType.QueuedConnection)
         self._worker.done.connect(self._on_check_done, Qt.ConnectionType.QueuedConnection)
         self._worker.error.connect(self._on_check_error, Qt.ConnectionType.QueuedConnection)
         self._thread.start()
@@ -686,9 +719,13 @@ class UpdateDialog(QMainWindow):
         self._action_btn.setEnabled(bool(info.sha256))
         if not info.sha256:
             self._status.setText(
-                self._status.text()
-                + "\n\nInstall blocked: integrity cannot be verified."
+                f"Version {info.version} is available. The installer checksum could not be verified. "
+                "Try checking again."
             )
+            self._info = None
+            self._retry = True
+            self._action_btn.setText("Retry check")
+            self._action_btn.setEnabled(True)
 
     def _on_check_error(self, msg: str) -> None:
         self._teardown_thread()
@@ -720,12 +757,12 @@ class UpdateDialog(QMainWindow):
     def _start_download(self) -> None:
         self._action_btn.setEnabled(False)
         self._progress.setVisible(True)
-        self._progress.setValue(0)
+        self._progress.setRange(0, 0)
         self._status.setText(f"Downloading version {self._info.version}…")
         self._thread = QThread()
         self._worker = _DownloadWorker(self._info)
         self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
+        self._thread.started.connect(self._worker.run, Qt.ConnectionType.QueuedConnection)
         self._worker.progress.connect(self._on_progress, Qt.ConnectionType.QueuedConnection)
         self._worker.done.connect(self._on_download_done, Qt.ConnectionType.QueuedConnection)
         self._worker.error.connect(self._on_download_error, Qt.ConnectionType.QueuedConnection)
@@ -733,11 +770,13 @@ class UpdateDialog(QMainWindow):
 
     def _on_progress(self, got: int, total: int) -> None:
         if total > 0:
-            self._progress.setValue(int(got * 100 / total))
+            self._progress.setRange(0, 100)
+            self._progress.setValue(min(100, int(got * 100 / total)))
 
     def _on_download_done(self, path: str) -> None:
         self._teardown_thread()
         self._installer_path = path
+        self._progress.setRange(0, 100)
         self._progress.setValue(100)
         self._status.setText(
             "Downloaded and verified. Click Update now — JasperVoice will close, "
@@ -757,20 +796,12 @@ class UpdateDialog(QMainWindow):
 
     def _launch_install(self) -> None:
         from . import updater
-        from . import single_instance
-
-        # Release our single-instance named mutex BEFORE launching the
-        # installer. Inno's AppMutex gate runs at the installer's startup —
-        # before its CloseApplications phase — so if the mutex is still held it
-        # aborts a /VERYSILENT update with "JasperVoice is currently running"
-        # (the suppressed prompt defaults to Cancel). Releasing it first lets
-        # the installer past that gate; CloseApplications then closes this
-        # process to unlock the _internal\*.dll files.
-        single_instance.release_active()
         try:
-            updater.launch_installer(self._installer_path, silent=True)
+            updater.launch_installer(self._installer_path, silent=True, expected_sha256=self._info.sha256)
         except updater.UpdateError as e:
             QMessageBox.warning(self, "JasperVoice", f"Could not launch installer:\n{e}")
+            self._installer_path = None
+            self._action_btn.setText("Download again")
             return
         QApplication.quit()
 
@@ -783,6 +814,10 @@ class UpdateDialog(QMainWindow):
             self._thread = None
         self._worker = None
 
-    def closeEvent(self, event) -> None:  # noqa: ARG002, N802
-        self._teardown_thread()
-        super().closeEvent(event)
+    def shutdown(self) -> None:
+        if self._thread is not None:
+            self._thread.requestInterruption()
+            self._thread.quit()
+            self._thread.wait()
+            self._thread = None
+            self._worker = None

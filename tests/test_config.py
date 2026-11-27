@@ -220,7 +220,7 @@ def test_provider_invalid_falls_back_to_none(tmp_path, monkeypatch):
     assert cfg["post_processing_provider"] == "none"
 
 
-def test_enabled_polish_uses_provider_and_api_mode(tmp_path, monkeypatch):
+def test_enabled_polish_preserves_explicit_raw_style(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     p = get_config_path()
     p.write_text(json.dumps({
@@ -231,7 +231,7 @@ def test_enabled_polish_uses_provider_and_api_mode(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg["post_processing_enabled"] is True
     assert cfg["post_processing_provider"] == "opencode"
-    assert cfg["output_mode"] == "clean"
+    assert cfg["output_mode"] == "raw"
 
 
 def test_opencode_defaults_exist(tmp_path, monkeypatch):
@@ -252,12 +252,12 @@ def test_opencode_base_url_invalid_falls_back(tmp_path, monkeypatch):
     assert cfg["opencode_base_url"] == ""
 
 
-def test_opencode_api_key_env_empty_falls_back(tmp_path, monkeypatch):
+def test_opencode_api_key_env_can_be_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     p = get_config_path()
     p.write_text(json.dumps({"opencode_api_key_env": "   "}), encoding="utf-8")
     cfg = load_config()
-    assert cfg["opencode_api_key_env"] == "OPENCODE_API_KEY"
+    assert cfg["opencode_api_key_env"] == ""
 
 
 def test_opencode_api_key_env_raw_key_falls_back_without_logging_secret(

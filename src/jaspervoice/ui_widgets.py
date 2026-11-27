@@ -15,14 +15,18 @@ Original primitives drawn with plain Qt — no icon fonts, no images:
 from __future__ import annotations
 
 import logging
+import math
+import time
+from collections import deque
 from typing import Optional
 
-from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, Signal
+import numpy as np
+
+from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QIcon,
     QKeySequence,
-    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -136,21 +140,41 @@ def _draw_mic(p: QPainter) -> None:
 
 
 def _draw_chip(p: QPainter) -> None:
-    p.drawRoundedRect(QRectF(4.2, 4.2, 7.6, 7.6), 1.2, 1.2)
-    p.drawRect(QRectF(6.7, 6.7, 2.6, 2.6))
-    for c in (5.8, 8.0, 10.2):
-        p.drawLine(QPointF(c, 1.6), QPointF(c, 4.2))
-        p.drawLine(QPointF(c, 11.8), QPointF(c, 14.4))
-        p.drawLine(QPointF(1.6, c), QPointF(4.2, c))
-        p.drawLine(QPointF(11.8, c), QPointF(14.4, c))
+    p.drawRoundedRect(QRectF(4, 4, 8, 8), 1.5, 1.5)
+    p.drawRoundedRect(QRectF(6.5, 6.5, 3, 3), 0.5, 0.5)
+    for c in (6, 10):
+        p.drawLine(QPointF(c, 2), QPointF(c, 4))
+        p.drawLine(QPointF(c, 12), QPointF(c, 14))
+        p.drawLine(QPointF(2, c), QPointF(4, c))
+        p.drawLine(QPointF(12, c), QPointF(14, c))
 
 
 def _draw_spark(p: QPainter) -> None:
-    path = QPainterPath(QPointF(8, 1.8))
-    for x, y in ((9.6, 6.4), (14.2, 8), (9.6, 9.6), (8, 14.2), (6.4, 9.6), (1.8, 8), (6.4, 6.4)):
-        path.lineTo(x, y)
+    path = QPainterPath(QPointF(8, 2))
+    path.quadTo(9, 7, 14, 8)
+    path.quadTo(9, 9, 8, 14)
+    path.quadTo(7, 9, 2, 8)
+    path.quadTo(7, 7, 8, 2)
     path.closeSubpath()
     p.drawPath(path)
+
+
+def _draw_command(p: QPainter) -> None:
+    path = QPainterPath(QPointF(2, 9))
+    path.lineTo(2, 4.5)
+    path.quadTo(2, 3, 3.5, 3)
+    path.lineTo(12.5, 3)
+    path.quadTo(14, 3, 14, 4.5)
+    path.lineTo(14, 9)
+    path.quadTo(14, 10.5, 12.5, 10.5)
+    path.lineTo(7, 10.5)
+    path.lineTo(3.5, 13.5)
+    path.lineTo(3.5, 10.5)
+    path.quadTo(2, 10.5, 2, 9)
+    p.drawPath(path)
+    p.drawLine(QPointF(5.5, 5.5), QPointF(7, 7))
+    p.drawLine(QPointF(7, 7), QPointF(5.5, 8.5))
+    p.drawLine(QPointF(9, 8.5), QPointF(11, 8.5))
 
 
 def _draw_download(p: QPainter) -> None:
@@ -192,6 +216,7 @@ _GLYPHS = {
     "mic": _draw_mic,
     "chip": _draw_chip,
     "spark": _draw_spark,
+    "command": _draw_command,
     "download": _draw_download,
     "pulse": _draw_pulse,
     "folder": _draw_folder,
@@ -292,10 +317,12 @@ class SettingRow(QWidget):
         self.label_text = label
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 10, 0, 10)
-        grid.setHorizontalSpacing(24)
+        grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(3)
         lbl = QLabel(label)
         lbl.setProperty("role", "fieldlabel")
+        lbl.setWordWrap(True)
+        control.setAccessibleName(label)
         grid.addWidget(lbl, 0, 0, Qt.AlignmentFlag.AlignTop)
         grid.addWidget(control, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         if hint_text:
@@ -379,9 +406,9 @@ class Switch(QAbstractButton):
         p.drawEllipse(QRectF(x, (h - knob_d) / 2.0, knob_d, knob_d))
 
         if self.hasFocus():
-            p.setPen(QPen(QColor(COLORS["accent"]), 1, Qt.PenStyle.DotLine))
+            p.setPen(QPen(QColor(COLORS["focus"]), 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(track.adjusted(-0.5, -0.5, 0.5, 0.5), radius, radius)
+            p.drawRoundedRect(track.adjusted(1, 1, -1, -1), radius, radius)
         p.end()
 
 
@@ -437,128 +464,112 @@ class SegmentedControl(QWidget):
 
 # --- Live input meter ----------------------------------------------------------
 
-METER_BARS = 28
+METER_FLOOR_DB = -60
+
+
+def _meter_scale(amplitude: float) -> float:
+    if amplitude <= 0.001:
+        return 0.0
+    return min(1.0, 1.0 - 20 * math.log10(amplitude) / METER_FLOOR_DB)
 
 
 class LevelMeter(QWidget):
-    """Live input meter painted as a mirrored waveform: rounded bars extend
-    up and down from the vertical center, tinted toward the accent color as
-    the level rises, with slow-falling peak markers.
+    """RMS input level and sample peak, scaled in dBFS."""
 
-    Call set_levels() (on the UI thread, via a queued Signal) with per-band
-    magnitudes in [0..1]; bars decay toward silence between updates.
-    """
-
-    def __init__(self, parent: Optional[QWidget] = None, bar_count: int = METER_BARS):
+    def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._bars = [0.0] * bar_count
-        self._peaks = [0.0] * bar_count
-        self._active = True
-        self.setMinimumHeight(76)
+        self._rms = 0.0
+        self._peak = 0.0
+        self.setMinimumHeight(58)
+        self.setAccessibleName("Microphone input level in dBFS")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def set_active(self, active: bool) -> None:
-        self._active = active
-        if not active:
-            self._bars = [0.0] * len(self._bars)
-            self._peaks = [0.0] * len(self._peaks)
+    def reset(self) -> None:
+        self._rms = self._peak = 0.0
         self.update()
 
-    def is_active(self) -> bool:
-        return self._active
-
-    def set_levels(self, bands: list) -> None:
-        if not self._active or not bands:
+    def set_levels(self, rms: float, peak: float) -> None:
+        if not self.isVisible():
             return
-        n = len(self._bars)
-        src = len(bands)
-        for i in range(n):
-            # Spread the (few) FFT bands across the (many) visual bars,
-            # mirrored around the middle so the shape reads as a waveform.
-            mirrored = i if i < n // 2 else n - 1 - i
-            v = float(bands[min(int(mirrored * 2 * src / n), src - 1)])
-            v = max(0.0, min(v, 1.0))
-            # Fast attack, slow decay; peaks fall even slower.
-            self._bars[i] = v if v > self._bars[i] else self._bars[i] * 0.78
-            self._peaks[i] = max(self._bars[i], self._peaks[i] * 0.95)
-        self.update()
-
-    @staticmethod
-    def _lerp(c1: QColor, c2: QColor, t: float) -> QColor:
-        return QColor(
-            int(c1.red() + (c2.red() - c1.red()) * t),
-            int(c1.green() + (c2.green() - c1.green()) * t),
-            int(c1.blue() + (c2.blue() - c1.blue()) * t),
-        )
+        level = _meter_scale(rms)
+        next_rms = self._rms + (level - self._rms) * (0.78 if level > self._rms else 0.23)
+        next_rms = next_rms if next_rms >= 0.004 else 0.0
+        next_peak = max(next_rms, _meter_scale(peak), self._peak - 0.018)
+        if (next_rms, next_peak) != (self._rms, self._peak):
+            self._rms, self._peak = next_rms, next_peak
+            self.update()
 
     def paintEvent(self, event) -> None:  # noqa: ARG002, N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-
-        # Recessed rounded background with a soft top-to-bottom gradient.
-        bg_path = QPainterPath()
-        bg_path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 8, 8)
-        grad = QLinearGradient(0, 0, 0, h)
-        grad.setColorAt(0.0, QColor("#0B0B0B"))
-        grad.setColorAt(1.0, QColor("#121212"))
-        p.fillPath(bg_path, grad)
-        p.setPen(QPen(QColor(COLORS["border"]), 1))
-        p.drawPath(bg_path)
-
-        n = len(self._bars)
-        gap = 3.0
-        bar_w = max(2.0, (w - 24 - gap * (n - 1)) / n)
-        cy = h / 2.0
-        max_half = h / 2.0 - 12
-        quiet = QColor(COLORS["border_strong"])
-        accent = QColor(COLORS["accent"])
-        bright = QColor(COLORS["accent_hover"])
-
-        # Faint center baseline so silence still reads as "alive".
-        p.setPen(QPen(QColor(255, 255, 255, 16), 1))
-        p.drawLine(QPointF(12, cy), QPointF(w - 12, cy))
-
         p.setPen(Qt.PenStyle.NoPen)
-        x = 12.0
-        for i in range(n):
-            v = self._bars[i] if self._active else 0.0
-            half = max(1.5, v * max_half)
-            color = self._lerp(quiet, accent, min(1.0, v * 1.6)) if self._active else quiet
-            p.setBrush(color)
-            p.drawRoundedRect(QRectF(x, cy - half, bar_w, half * 2), bar_w / 2, bar_w / 2)
-            peak = self._peaks[i] if self._active else 0.0
-            if peak > 0.12 and peak > v + 0.05:
-                p.setBrush(bright)
-                py = cy - peak * max_half
-                p.drawRoundedRect(QRectF(x, py - 1, bar_w, 2), 1, 1)
-            x += bar_w + gap
+        p.setBrush(QColor(COLORS["bg"]))
+        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 8, 8)
 
-        if not self._active:
-            p.setPen(QPen(QColor(COLORS["fg_muted"])))
-            p.drawText(0, 0, w, h, Qt.AlignmentFlag.AlignCenter, "Meter paused — press Resume")
-        p.end()
+        x, y, h = 12.0, 12.0, 14.0
+        span = self.width() - 2 * x
+        cells, gap = 30, 2.5
+        step = span / cells
+        for i in range(cells):
+            cell = QRectF(x + i * step, y, step - gap, h)
+            p.setBrush(QColor(COLORS["border_strong"]))
+            p.drawRoundedRect(cell, 2, 2)
+            filled = min(1.0, self._rms * cells - i)
+            if filled > 0:
+                color = "danger" if i >= 28 else "warning" if i >= 24 else "accent"
+                p.setBrush(QColor(COLORS[color]))
+                cell.setWidth(cell.width() * filled)
+                p.drawRoundedRect(cell, 2, 2)
+
+        if self._peak > 0.0:
+            p.setBrush(QColor(COLORS["fg"]))
+            marker = min(span - 2, span * self._peak)
+            p.drawRoundedRect(QRectF(x + marker, y - 3, 2, h + 6), 1, 1)
+
+        p.setPen(QColor(COLORS["fg_muted"]))
+        for i, label in enumerate(("-60", "-45", "-30", "-15", "0 dBFS")):
+            width = p.fontMetrics().horizontalAdvance(label)
+            left = max(x, min(x + span - width, x + span * i / 4 - width / 2))
+            p.drawText(QPointF(left, 45), label)
 
 
 class MicLevelSource(QObject):
-    """Opens its own sounddevice InputStream for the mic-check meters.
+    """Publish a single level snapshot each frame while the input is open."""
 
-    The PortAudio callback runs on an audio thread; it only emits the
-    `levels` Signal — every connected widget must use a queued connection
-    (automatic for cross-thread connections) so painting stays on the UI
-    thread. Completely independent from the dictation Recorder.
-    """
-
-    levels = Signal(list)
-    error = Signal(str)
+    levels = Signal(float, float)
+    status = Signal(str)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._stream = None
+        self._pending = deque(maxlen=20)
+        self._sample = (0.0, 0.0, 0.0)
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self._publish)
 
     @property
     def is_running(self) -> bool:
         return self._stream is not None
+
+    def _capture(self, indata, frames, _time_info, _status) -> None:
+        if frames:
+            audio = indata[:, 0]
+            rms = math.sqrt(float(np.dot(audio, audio)) / frames)
+            peak = max(float(audio.max()), -float(audio.min()))
+            self._pending.append((rms, peak, time.monotonic()))
+
+    def _publish(self) -> None:
+        rms, peak, timestamp = self._sample
+        if self._pending:
+            peak = 0.0
+            while self._pending:
+                rms, sample_peak, timestamp = self._pending.popleft()
+                peak = max(peak, sample_peak)
+            self._sample = (rms, peak, timestamp)
+        if time.monotonic() - timestamp > 0.2:
+            rms = peak = 0.0
+        self.levels.emit(rms, peak)
 
     def start(self, device: Optional[str] = None) -> None:
         if self._stream is not None:
@@ -566,37 +577,32 @@ class MicLevelSource(QObject):
         try:
             import sounddevice as sd
 
-            from .audio import Recorder
-
             dev = None if device in (None, "", "default") else device
-
-            def _callback(indata, frames, time_info, status) -> None:  # noqa: ARG001
-                try:
-                    audio = indata.reshape(-1)
-                    bands = Recorder._compute_bands(audio, 16000)
-                    self.levels.emit(bands)
-                except Exception:
-                    pass  # never raise inside the audio callback
-
+            samplerate = sd.query_devices(dev, "input")["default_samplerate"]
             self._stream = sd.InputStream(
-                samplerate=16000, channels=1, dtype="float32",
-                device=dev, callback=_callback,
+                samplerate=samplerate, channels=1, dtype="float32",
+                device=dev, callback=self._capture,
+                blocksize=round(samplerate * 0.025),
             )
             self._stream.start()
         except Exception as e:
-            self._stream = None
+            self.stop()
             log.warning("Mic meter could not start: %s", e)
-            self.error.emit(str(e))
+            self.status.emit("Microphone unavailable. Check the device and Windows permissions.")
+            return
+        self.status.emit("Live · RMS and peak")
+        self._timer.start()
 
     def stop(self) -> None:
-        if self._stream is None:
-            return
-        try:
-            self._stream.stop()
-            self._stream.close()
-        except Exception:
-            pass
-        self._stream = None
+        self._timer.stop()
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                log.debug("Could not close mic meter stream", exc_info=True)
+        self._sample = (0.0, 0.0, 0.0)
+        self._pending.clear()
 
 
 # --- Model card pieces ----------------------------------------------------------
@@ -665,7 +671,7 @@ class StatTile(QFrame):
         super().__init__(parent)
         self.setProperty("role", "stattile")
         box = QVBoxLayout(self)
-        box.setContentsMargins(20, 16, 20, 16)
+        box.setContentsMargins(14, 10, 14, 11)
         box.setSpacing(4)
         self.value_label = QLabel("—")
         self.value_label.setProperty("role", "statvalue")

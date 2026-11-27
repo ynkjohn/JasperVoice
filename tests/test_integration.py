@@ -113,7 +113,6 @@ def test_overlay_mirrors_state_changes(qt_app, tmp_path, monkeypatch):
         assert a._overlay.isVisible()
 
         # Simulate cancel (short take)
-        a._recorder.cancel()
         a._on_cancel()
         assert a._overlay.state() == "idle"
         # The redesigned overlay hides via a fade-out animation; force it to

@@ -1,8 +1,4 @@
-"""Dark theme palette and QSS stylesheet for JasperVoice UI.
-
-Reference: OpenCode / Anthropic-style technical minimalism — dark only,
-monospace headings, single orange accent, thin borders, no shadows.
-"""
+"""JasperVoice dark palette and Qt widget styling."""
 
 from __future__ import annotations
 
@@ -10,21 +6,24 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+from .assets import asset_path
+
 # --- Palette (extracted from the user-provided overlay SVGs) ---
 
 COLORS = {
-    "bg": "#0F0F0F",
-    "bg_alt": "#1A1A1A",
-    "bg_hover": "#222222",
-    "border": "#2A2A2A",
-    "border_strong": "#3A3A3A",
-    "fg": "#E8E6E6",
-    "fg_muted": "#9E9A9A",
-    "fg_disabled": "#5A5A5A",
-    "accent": "#D97757",
-    "accent_hover": "#E88766",
-    "danger": "#D14E5A",
-    "warning": "#B8893E",
+    "bg": "#13161A",
+    "bg_alt": "#1D2228",
+    "bg_hover": "#272E36",
+    "border": "#303840",
+    "border_strong": "#49535E",
+    "fg": "#F3F1EE",
+    "fg_muted": "#B3BCC5",
+    "fg_disabled": "#78818A",
+    "accent": "#F4A485",
+    "focus": "#97C8FF",
+    "accent_hover": "#FFBEA4",
+    "danger": "#FF767D",
+    "warning": "#F2C373",
 }
 
 # State colors for the recording overlay (used by overlay.py too).
@@ -66,12 +65,18 @@ STATE_COLORS = {
 }
 
 FONTS = {
-    "mono": "JetBrains Mono, Cascadia Mono, Cascadia Code, Consolas, monospace",
-    "sans": "Inter, Segoe UI, system-ui, sans-serif",
+    "mono": "Consolas",
+    "sans": "Segoe UI",
 }
 
 STYLESHEET = f"""
-QMainWindow, QWidget {{
+QWidget {{
+    color: {COLORS['fg']};
+    font-family: {FONTS['sans']};
+    font-size: 14px;
+}}
+
+QMainWindow, QDialog {{
     background-color: {COLORS['bg']};
     color: {COLORS['fg']};
     font-family: {FONTS['sans']};
@@ -82,8 +87,6 @@ QLabel[role="section"] {{
     font-family: {FONTS['mono']};
     font-size: 11px;
     font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
     color: {COLORS['accent']};
     background: transparent;
     padding-bottom: 2px;
@@ -97,7 +100,7 @@ QLabel[role="muted"] {{
 
 QLabel[role="hint"] {{
     color: {COLORS['fg_muted']};
-    font-size: 11px;
+    font-size: 12px;
     background: transparent;
     padding-top: 2px;
 }}
@@ -106,7 +109,6 @@ QLabel[role="title"] {{
     font-family: {FONTS['mono']};
     font-size: 15px;
     font-weight: bold;
-    letter-spacing: 3px;
     color: {COLORS['fg']};
     background: transparent;
     border: none;
@@ -194,15 +196,14 @@ QPushButton[primary="true"]:disabled {{
     border-color: {COLORS['border']};
 }}
 
-QLineEdit, QComboBox, QSpinBox, QKeySequenceEdit {{
+QLineEdit, QComboBox, QSpinBox, QKeySequenceEdit, QPlainTextEdit {{
     background-color: {COLORS['bg_alt']};
     color: {COLORS['fg']};
     border: 1px solid {COLORS['border_strong']};
     border-radius: 6px;
     padding: 7px 12px;
     min-height: 18px;
-    font-family: {FONTS['mono']};
-    font-size: 13px;
+    font-size: 14px;
     selection-background-color: {COLORS['accent']};
     selection-color: {COLORS['bg']};
 }}
@@ -221,6 +222,18 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QKeySequenceEdit:disa
 QComboBox::drop-down {{
     border: none;
     width: 20px;
+}}
+
+QComboBox::down-arrow, QSpinBox::down-arrow {{
+    image: url("__chevron_down__");
+    width: 12px;
+    height: 12px;
+}}
+
+QSpinBox::up-arrow {{
+    image: url("__chevron_up__");
+    width: 12px;
+    height: 12px;
 }}
 QComboBox QAbstractItemView {{
     background-color: {COLORS['bg_alt']};
@@ -330,16 +343,6 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
 
-QComboBox::down-arrow {{
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid {COLORS['fg_muted']};
-    width: 0;
-    height: 0;
-    margin-right: 6px;
-}}
-
 QSpinBox::up-button, QSpinBox::down-button {{
     width: 20px;
     background-color: {COLORS['bg_hover']};
@@ -348,26 +351,9 @@ QSpinBox::up-button, QSpinBox::down-button {{
 QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
     background-color: {COLORS['border']};
 }}
-QSpinBox::up-arrow {{
-    image: none;
-    border-left: 3px solid transparent;
-    border-right: 3px solid transparent;
-    border-bottom: 4px solid {COLORS['fg_muted']};
-    width: 0;
-    height: 0;
-}}
-QSpinBox::down-arrow {{
-    image: none;
-    border-left: 3px solid transparent;
-    border-right: 3px solid transparent;
-    border-top: 4px solid {COLORS['fg_muted']};
-    width: 0;
-    height: 0;
-}}
-
 QTableWidget {{
     background-color: {COLORS['bg_alt']};
-    alternate-background-color: #161616;
+    alternate-background-color: #191E23;
     color: {COLORS['fg']};
     border: 1px solid {COLORS['border']};
     border-radius: 8px;
@@ -377,10 +363,10 @@ QTableWidget {{
 }}
 QTableWidget::item {{
     padding: 6px 10px;
-    border-bottom: 1px solid #1E1E1E;
+    border-bottom: 1px solid #303840;
 }}
 QTableWidget::item:selected {{
-    background-color: rgba(217, 119, 87, 0.22);
+    background-color: rgba(244, 164, 133, 0.22);
     color: {COLORS['fg']};
 }}
 QHeaderView::section {{
@@ -392,25 +378,21 @@ QHeaderView::section {{
     font-family: {FONTS['mono']};
     font-size: 10px;
     font-weight: bold;
-    letter-spacing: 1px;
-    text-transform: uppercase;
 }}
 
 /* ===== Navigable settings shell ===== */
 
 QWidget#sideBar {{
-    background-color: #0A0A0A;
+    background-color: #171B20;
     border-right: 1px solid {COLORS['border']};
 }}
-QWidget#sideBar QLabel, QWidget#sideBar QWidget {{
+QWidget#sideBar QLabel {{
     background: transparent;
 }}
 
 QLabel[role="brandname"] {{
-    font-family: {FONTS['mono']};
-    font-size: 14px;
+    font-size: 18px;
     font-weight: bold;
-    letter-spacing: 2px;
     color: {COLORS['fg']};
 }}
 QLabel[role="brandsub"] {{
@@ -419,22 +401,19 @@ QLabel[role="brandsub"] {{
 }}
 
 QLabel[role="navgroup"] {{
-    font-family: {FONTS['mono']};
-    font-size: 10px;
+    font-size: 12px;
     font-weight: bold;
-    letter-spacing: 1.5px;
-    color: {COLORS['fg_disabled']};
-    padding: 10px 12px 4px 12px;
+    color: {COLORS['fg_muted']};
+    padding: 8px 10px 3px 10px;
 }}
 
 QPushButton[nav="true"] {{
     background: transparent;
-    border: none;
-    border-radius: 0px;
-    border-left: 2px solid transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
     color: {COLORS['fg_muted']};
     text-align: left;
-    padding: 9px 14px;
+    padding: 5px 10px;
     font-size: 13px;
 }}
 QPushButton[nav="true"]:hover {{
@@ -443,19 +422,17 @@ QPushButton[nav="true"]:hover {{
 }}
 QPushButton[nav="true"]:focus {{
     color: {COLORS['fg']};
-    border-left: 2px solid {COLORS['border_strong']};
+    border-color: {COLORS['focus']};
 }}
 QPushButton[nav="true"][navActive="true"] {{
     color: {COLORS['fg']};
-    background-color: rgba(217, 119, 87, 0.10);
-    border-left: 2px solid {COLORS['accent']};
+    background-color: rgba(244, 164, 133, 0.10);
+    font-weight: bold;
 }}
 
 QLabel[role="pagetitle"] {{
-    font-family: {FONTS['mono']};
-    font-size: 21px;
+    font-size: 31px;
     font-weight: bold;
-    letter-spacing: 1px;
     color: {COLORS['fg']};
     background: transparent;
 }}
@@ -465,20 +442,16 @@ QLabel[role="pagedesc"] {{
     background: transparent;
 }}
 QLabel[role="grouptitle"] {{
-    font-family: {FONTS['mono']};
-    font-size: 11px;
+    font-size: 16px;
     font-weight: bold;
-    letter-spacing: 2px;
-    color: {COLORS['accent']};
+    color: {COLORS['fg']};
     background: transparent;
     padding: 20px 0px 8px 0px;
 }}
 QLabel[role="panelheader"] {{
-    font-family: {FONTS['mono']};
-    font-size: 11px;
+    font-size: 16px;
     font-weight: bold;
-    letter-spacing: 2px;
-    color: {COLORS['accent']};
+    color: {COLORS['fg']};
     background: transparent;
     padding: 0px;
 }}
@@ -505,15 +478,12 @@ QFrame[role="stattile"] QLabel {{
     background: transparent;
 }}
 QLabel[role="statvalue"] {{
-    font-family: {FONTS['mono']};
-    font-size: 27px;
+    font-size: 26px;
     font-weight: bold;
     color: {COLORS['fg']};
 }}
 QLabel[role="statcaption"] {{
-    font-family: {FONTS['mono']};
-    font-size: 10px;
-    letter-spacing: 1.5px;
+    font-size: 12px;
     color: {COLORS['fg_muted']};
 }}
 
@@ -565,19 +535,16 @@ QPushButton[modelcard="true"]:hover {{
 }}
 QPushButton[modelcard="true"]:checked {{
     border: 1px solid {COLORS['accent']};
-    background-color: rgba(217, 119, 87, 0.08);
+    background-color: rgba(244, 164, 133, 0.08);
 }}
 QLabel[role="cardname"] {{
-    font-family: {FONTS['mono']};
-    font-size: 14px;
+    font-size: 15px;
     font-weight: bold;
     color: {COLORS['fg']};
     background: transparent;
 }}
 QLabel[role="cardstate"] {{
-    font-family: {FONTS['mono']};
-    font-size: 10px;
-    letter-spacing: 0.5px;
+    font-size: 12px;
     color: {COLORS['fg_muted']};
     background: transparent;
 }}
@@ -586,13 +553,12 @@ QLabel[role="cardstate"][emph="true"] {{
 }}
 
 QWidget#statusBar {{
-    background-color: #0A0A0A;
+    background-color: #171B20;
     border-top: 1px solid {COLORS['border']};
 }}
 QWidget#statusBar QLabel {{
     background: transparent;
-    font-family: {FONTS['mono']};
-    font-size: 11px;
+    font-size: 12px;
     color: {COLORS['fg_muted']};
 }}
 QLabel[role="statelamp"] {{
@@ -614,8 +580,20 @@ QLabel[role="toast"] {{
     font-size: 12px;
 }}
 
+QPushButton:focus, QPushButton[primary="true"]:focus,
+QPushButton[nav="true"]:focus, QPushButton[seg="true"]:focus,
+QPushButton[modelcard="true"]:focus,
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
+QKeySequenceEdit:focus, QPlainTextEdit:focus, QTableWidget:focus {{
+    border-color: {COLORS['focus']};
+}}
+
+QCheckBox:focus::indicator, QRadioButton:focus::indicator {{
+    border-color: {COLORS['focus']};
+}}
+
 QPlainTextEdit[role="logbox"] {{
-    background-color: #0A0A0A;
+    background-color: #171B20;
     color: {COLORS['fg_muted']};
     border: 1px solid {COLORS['border']};
     font-family: {FONTS['mono']};
@@ -628,7 +606,11 @@ QPlainTextEdit[role="logbox"] {{
 
 def apply_theme(app: QApplication) -> None:
     """Install the stylesheet and force a dark palette on the QApplication."""
-    app.setStyleSheet(STYLESHEET)
+    stylesheet = STYLESHEET
+    for direction in ("down", "up"):
+        chevron = asset_path(f"chevron-{direction}.svg")
+        stylesheet = stylesheet.replace(f"__chevron_{direction}__", chevron.as_posix() if chevron else "")
+    app.setStyleSheet(stylesheet)
     pal = QPalette()
     pal.setColor(QPalette.Window, QColor(COLORS["bg"]))
     pal.setColor(QPalette.WindowText, QColor(COLORS["fg"]))

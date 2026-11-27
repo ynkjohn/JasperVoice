@@ -22,13 +22,18 @@
 .PARAMETER Iscc
     Path to the Inno Setup compiler (ISCC.exe). Auto-detected if omitted.
 
+.PARAMETER OutputRoot
+    Build output directory. Defaults to dist; use a versioned directory to
+    keep an older bundle available alongside the new one.
+
 .EXAMPLE
     .\scripts\build_release.ps1
 #>
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
-    [string]$Iscc
+    [string]$Iscc,
+    [string]$OutputRoot = "dist"
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +42,7 @@ Set-StrictMode -Version Latest
 # Repo root = parent of this script's directory.
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $RepoRoot
+$OutputRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputRoot)
 
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $PyInstaller = Join-Path $RepoRoot ".venv\Scripts\pyinstaller.exe"
@@ -76,27 +82,30 @@ if (-not $SkipBuild) {
         throw "PyInstaller not found at $PyInstaller. Run: pip install -r requirements-dev.txt"
     }
     Write-Host "Building PyInstaller bundle..." -ForegroundColor Cyan
-    & $PyInstaller "jaspervoice.spec" --noconfirm
+    & $PyInstaller "jaspervoice.spec" --noconfirm --distpath $OutputRoot
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
 } else {
     Write-Host "Skipping PyInstaller build (-SkipBuild)." -ForegroundColor Yellow
 }
 
-$BundleDir = Join-Path $RepoRoot "dist\JasperVoice"
+$BundleDir = Join-Path $OutputRoot "JasperVoice"
 $BundleExe = Join-Path $BundleDir "JasperVoice.exe"
 if (-not (Test-Path -LiteralPath $BundleExe)) {
     throw "Bundle missing: $BundleExe. Build it first (omit -SkipBuild)."
+}
+if ((Get-Item -LiteralPath $BundleExe).VersionInfo.ProductVersion -ne $Version) {
+    throw "The executable version does not match $Version. Rebuild before packaging."
 }
 
 # --- 2. Inno Setup installer ---
 $IsccPath = Find-Iscc
 Write-Host "Using Inno Setup: $IsccPath" -ForegroundColor Cyan
 
-$OutDir = Join-Path $RepoRoot "dist\installer"
+$OutDir = Join-Path $OutputRoot "installer"
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
 $IssPath = Join-Path $RepoRoot "installer\JasperVoice.iss"
-& $IsccPath "/DAppVersion=$Version" "/DSourceDir=$BundleDir" $IssPath
+& $IsccPath "/DAppVersion=$Version" "/DSourceDir=$BundleDir" "/O$OutDir" $IssPath
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed (exit $LASTEXITCODE)" }
 
 $SetupExe = Join-Path $OutDir "JasperVoice-Setup-$Version.exe"

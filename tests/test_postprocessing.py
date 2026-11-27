@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -271,6 +272,33 @@ def test_opencode_http_error_raises():
             pp.process("hello", mode="clean")
 
 
+def test_opencode_reports_llama_cpp_context_overflow():
+    error_body = json.dumps({
+        "error": {
+            "code": 400,
+            "type": "exceed_context_size_error",
+            "message": "Provider details may contain dictated text",
+        },
+    }).encode()
+
+    def fake_request(url, body, headers, timeout_s):
+        raise urllib.error.HTTPError(url, 400, "Bad Request", None, io.BytesIO(error_body))
+
+    pp = OpenCodePostProcessor(base_url="http://localhost:1234/v1", request_fn=fake_request)
+    with pytest.raises(PostProcessorError, match="HTTP 400.*context window") as exc_info:
+        pp.process("hello", mode="clean")
+    assert "Provider details" not in str(exc_info.value)
+
+
+def test_opencode_reports_http_400_without_json_error_body():
+    def fake_request(url, body, headers, timeout_s):
+        raise urllib.error.HTTPError(url, 400, "Bad Request", None, io.BytesIO(b"not json"))
+
+    pp = OpenCodePostProcessor(base_url="http://localhost:1234/v1", request_fn=fake_request)
+    with pytest.raises(PostProcessorError, match="HTTP 400 Bad Request"):
+        pp.process("hello", mode="clean")
+
+
 def test_opencode_403_without_env_var_explains_auth(monkeypatch):
     def fake_request(url, body, headers, timeout_s):
         raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)
@@ -337,6 +365,36 @@ def test_opencode_empty_content_raises():
         mp.setenv("OPENCODE_API_KEY", "key")
         with pytest.raises(PostProcessorError, match="empty content"):
             pp.process("hello", mode="clean")
+
+
+@pytest.mark.parametrize("response", [[], {"choices": [None]}, {"choices": [{"message": None}]}])
+def test_opencode_malformed_completion_raises_provider_error(response):
+    pp = OpenCodePostProcessor(
+        base_url="https://api.example.com",
+        request_fn=_fake_request_fn(response_json=response),
+    )
+    with pytest.raises(PostProcessorError):
+        pp.process("hello", mode="clean")
+
+
+@pytest.mark.parametrize(("reason", "error"), [
+    ("length", "token limit"),
+    ("content_filter", "content filter"),
+    ("tool_calls", "tool call"),
+    ("function_call", "tool call"),
+])
+def test_opencode_rejects_incomplete_completion_with_text(reason, error):
+    pp = OpenCodePostProcessor(
+        base_url="https://api.example.com",
+        request_fn=_fake_request_fn(response_json={
+            "choices": [{
+                "finish_reason": reason,
+                "message": {"content": "Die"},
+            }],
+        }),
+    )
+    with pytest.raises(PostProcessorError, match=error):
+        pp.process("Die Sitzung findet morgen statt.", mode="clean", language="de")
 
 
 def test_opencode_success_returns_content():
@@ -590,8 +648,8 @@ def test_diagnose_polish_config_no_leak_of_alt_secret(monkeypatch):
         assert secret not in issue
 
 
-def test_runtime_403_message_suggests_test_button(monkeypatch):
-    """The runtime 403 message must point the user at the AI Polish Test button
+def test_runtime_403_message_suggests_check_key_button(monkeypatch):
+    """The runtime 403 message must point the user at the AI Polish Check key button
     and mention the local-server escape hatch, so they can self-serve without
     reading source code."""
     from jaspervoice.postprocessing import OpenCodePostProcessor
@@ -611,7 +669,7 @@ def test_runtime_403_message_suggests_test_button(monkeypatch):
         pp.process("hello", mode="clean")
     msg = str(exc_info.value)
     assert "AI Polish" in msg
-    assert "Settings" in msg and "Test" in msg
+    assert "Check key" in msg
     assert "Ollama" in msg or "LM Studio" in msg
 
 

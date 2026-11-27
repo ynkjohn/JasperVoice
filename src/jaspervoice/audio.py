@@ -132,6 +132,9 @@ class Recorder:
         Takes effect on the next start(); an in-flight recording is untouched."""
         self._requested_device = device
 
+    def set_level_callback(self, callback: Optional[Callable[[list[float]], None]]) -> None:
+        self._level_callback = callback
+
     def _resolve_device(self) -> Optional[int | str]:
         if self._requested_device is not None:
             return self._requested_device
@@ -152,10 +155,11 @@ class Recorder:
         if indata.size == 0:
             return
         with self._lock:
-            if self._active:
-                audio = indata.copy().reshape(-1).astype(np.float32, copy=False)
-                self._buffer.append(audio)
-                callback = self._level_callback
+            if not self._active:
+                return
+            audio = indata.copy().reshape(-1).astype(np.float32, copy=False)
+            self._buffer.append(audio)
+            callback = self._level_callback
         if callback is not None:
             try:
                 bands = self._compute_bands(audio, self.sample_rate)
@@ -207,6 +211,12 @@ class Recorder:
             with self._lock:
                 self._active = False
                 self._buffer = []
+            stream, self._stream = self._stream, None
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    log.debug("Could not close the failed input stream", exc_info=True)
             raise RecorderError(f"Failed to start input stream: {e}") from e
 
     def stop(self) -> np.ndarray:

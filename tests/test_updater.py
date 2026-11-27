@@ -1,15 +1,16 @@
 """Tests for the GitHub-Releases self-updater.
 
-These tests never touch the network: GitHub responses are stubbed by
-monkeypatching ``updater._http_get``, and downloads write local bytes. The
-focus is the failure-safe contract — every error path raises ``UpdateError``
-(never a raw exception) and integrity is enforced before anything is launched.
+These tests stub GitHub responses and never touch the network. Downloads
+write local bytes, and installer launches are replaced with test doubles.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from io import BytesIO
+from urllib.error import HTTPError, URLError
+from urllib.response import addinfourl
 
 import pytest
 
@@ -132,14 +133,24 @@ def test_check_for_update_raises_when_no_installer(monkeypatch):
         updater.check_for_update(current="0.1.0")
 
 
-def test_check_for_update_missing_sha_is_not_fatal(monkeypatch):
+@pytest.mark.parametrize("has_manifest", [False, True], ids=["missing-manifest", "missing-entry"])
+def test_check_for_update_reports_release_without_installer_checksum(monkeypatch, has_manifest):
     installer = {
         "name": "JasperVoice-Setup-1.0.0.exe",
         "browser_download_url": "https://example/JasperVoice-Setup-1.0.0.exe",
         "size": 1,
     }
-    rel = _release_json("v1.0.0", [installer])
-    monkeypatch.setattr(updater, "_http_get", lambda *a, **k: rel)
+    assets = [installer]
+    sums_url = "https://example/SHA256SUMS"
+    if has_manifest:
+        assets.append({"name": "SHA256SUMS", "browser_download_url": sums_url})
+
+    def fake_get(url, timeout_s, accept="application/json"):
+        if url == sums_url:
+            return f"{'a' * 64}  other-asset.exe\n".encode()
+        return _release_json("v1.0.0", assets)
+
+    monkeypatch.setattr(updater, "_http_get", fake_get)
     info = updater.check_for_update(current="0.1.0")
     assert info is not None
     assert info.sha256 is None
@@ -149,6 +160,62 @@ def test_check_for_update_bad_json_raises(monkeypatch):
     monkeypatch.setattr(updater, "_http_get", lambda *a, **k: b"{not json")
     with pytest.raises(UpdateError):
         updater.check_for_update(current="0.1.0")
+
+
+@pytest.mark.parametrize("api_status", [403, 429])
+@pytest.mark.parametrize("current", ["1.0.0", "1.1.0"])
+def test_check_for_update_uses_public_redirect(monkeypatch, api_status, current):
+    repo = "owner/JasperVoice"
+    api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+    releases_url = f"https://github.com/{repo}/releases"
+    latest_url = f"{releases_url}/latest"
+    tag = "v1.1.0"
+    asset_base = f"{releases_url}/download/{tag}"
+    sums_url = f"{asset_base}/SHA256SUMS"
+    name = "JasperVoice-Setup-1.1.0.exe"
+    digest = "a" * 64
+    requested = []
+
+    def fake_urlopen(request, **kwargs):
+        url = request.full_url
+        requested.append(url)
+        if url == api_url:
+            raise HTTPError(url, api_status, "Rate limit exceeded", {}, None)
+        if url == latest_url:
+            return addinfourl(BytesIO(b""), {}, f"{releases_url}/tag/{tag}", 200)
+        if url == sums_url:
+            sums = f"{digest}  {name}\n".encode()
+            return addinfourl(BytesIO(sums), {}, url, 200)
+        pytest.fail(f"Unexpected update request: {url}")
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen)
+    info = updater.check_for_update(repo=repo, current=current)
+
+    if current == "1.1.0":
+        assert info is None
+        assert requested == [api_url, latest_url]
+    else:
+        assert info is not None
+        assert (info.version, info.tag) == ("1.1.0", tag)
+        assert info.asset_name == name
+        assert info.asset_url == f"{asset_base}/{name}"
+        assert info.sha256 == digest
+        assert requested == [api_url, latest_url, sums_url]
+
+
+def test_check_for_update_reports_api_and_public_page_unavailable(monkeypatch):
+    def fake_urlopen(request, **kwargs):
+        url = request.full_url
+        if url.startswith("https://api.github.com/"):
+            raise HTTPError(url, 503, "Service Unavailable", {}, None)
+        if url.startswith("https://github.com/") and url.endswith("/releases/latest"):
+            raise URLError("Connection unavailable")
+        pytest.fail(f"Unexpected update request: {url}")
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(UpdateError, match="public GitHub release page") as exc:
+        updater.check_for_update(current="1.0.0")
+    assert "HTTP 503" in str(exc.value)
 
 
 # --- download_installer ----------------------------------------------------
@@ -162,6 +229,11 @@ def _make_info(url, sha=None, name="JasperVoice-Setup-1.0.0.exe"):
 
 def test_download_refuses_without_sha(monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
+
+    def unexpected_download(*args, **kwargs):
+        pytest.fail("Download started without a checksum")
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", unexpected_download)
     info = _make_info("https://example/x.exe", sha=None)
     with pytest.raises(UpdateError, match="SHA256"):
         updater.download_installer(info)
@@ -229,6 +301,17 @@ def test_stage_local_installer_sha_mismatch(tmp_path):
         updater.stage_local_installer(p, expected_sha256="0" * 64)
 
 
+@pytest.mark.parametrize("sums", [None, "malformed  Setup.exe\n"], ids=["missing", "invalid"])
+def test_stage_local_installer_requires_checksum(tmp_path, sums):
+    installer = tmp_path / "Setup.exe"
+    installer.write_bytes(b"installer-bytes")
+    if sums is not None:
+        installer.with_name("SHA256SUMS").write_text(sums, encoding="utf-8")
+
+    with pytest.raises(UpdateError, match="SHA256SUMS"):
+        updater.stage_local_installer(installer)
+
+
 def test_stage_local_installer_ok(tmp_path):
     p = tmp_path / "Setup.exe"
     p.write_bytes(b"abc")
@@ -244,9 +327,42 @@ def test_launch_installer_missing_raises(tmp_path):
         updater.launch_installer(tmp_path / "absent.exe")
 
 
+def test_launch_installer_refuses_missing_checksum(monkeypatch, tmp_path):
+    installer = tmp_path / "Setup.exe"
+    installer.write_bytes(b"installer-bytes")
+
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail("Installer launched without a checksum")
+
+    monkeypatch.setattr(updater.subprocess, "Popen", unexpected_launch)
+    with pytest.raises(UpdateError, match="SHA256SUMS"):
+        updater.launch_installer(installer)
+
+
+@pytest.mark.parametrize("online", [True, False], ids=["online", "local"])
+def test_launch_installer_rejects_file_modified_after_verification(monkeypatch, tmp_path, online):
+    installer = tmp_path / "Setup.exe"
+    data = b"installer-bytes"
+    installer.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    expected_sha256 = digest if online else None
+    if not online:
+        installer.with_name("SHA256SUMS").write_text(f"{digest}  {installer.name}\n", encoding="utf-8")
+    assert updater.stage_local_installer(installer, expected_sha256=expected_sha256) == installer
+    installer.write_bytes(b"tampered")
+
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail("Installer launched after its contents were modified")
+
+    monkeypatch.setattr(updater.subprocess, "Popen", unexpected_launch)
+    with pytest.raises(UpdateError, match="mismatch"):
+        updater.launch_installer(installer, expected_sha256=expected_sha256)
+
+
 def test_launch_installer_invokes_popen(monkeypatch, tmp_path):
     p = tmp_path / "Setup.exe"
     p.write_bytes(b"x")
+    digest = hashlib.sha256(b"x").hexdigest()
     calls = {}
 
     def fake_popen(args, **kwargs):
@@ -254,8 +370,8 @@ def test_launch_installer_invokes_popen(monkeypatch, tmp_path):
         return object()
 
     monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
-    updater.launch_installer(p, silent=True)
-    assert calls["args"][0] == str(p)
+    updater.launch_installer(p, silent=True, expected_sha256=digest)
+    assert calls["args"][0] == str(p.resolve())
     assert "/VERYSILENT" in calls["args"]
     assert "/SUPPRESSMSGBOXES" in calls["args"]
     assert "/NORESTART" in calls["args"]
@@ -267,6 +383,8 @@ def test_launch_installer_invokes_popen(monkeypatch, tmp_path):
 def test_launch_installer_interactive_has_no_silent_flags(monkeypatch, tmp_path):
     p = tmp_path / "Setup.exe"
     p.write_bytes(b"x")
+    digest = hashlib.sha256(b"x").hexdigest()
+    p.with_name("SHA256SUMS").write_text(f"{digest}  {p.name}\n", encoding="utf-8-sig")
     calls = {}
 
     def fake_popen(args, **kwargs):
@@ -275,4 +393,4 @@ def test_launch_installer_interactive_has_no_silent_flags(monkeypatch, tmp_path)
 
     monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
     updater.launch_installer(p, silent=False)
-    assert calls["args"] == [str(p)]
+    assert calls["args"] == [str(p.resolve())]

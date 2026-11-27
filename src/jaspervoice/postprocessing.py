@@ -40,36 +40,38 @@ COMMON_API_KEY_ENVS: tuple[str, ...] = (
     "GEMINI_API_KEY",
 )
 
+_PRESERVE_LANGUAGE = (
+    "Keep the original language or mixture of languages used in the dictation. "
+    "Only translate if explicitly requested. "
+)
+
 PROMPTS: dict[str, str] = {
     "clean": (
         "You clean up dictated text. Fix punctuation, capitalization, spacing, "
         "and obvious transcription mistakes. Preserve the user's meaning. "
-        "Return only the corrected text."
+        "Return only the corrected text. "
+        "Keep the original language or mixture of languages in the dictated text. "
+        "Do not translate unless the user explicitly requests translation."
     ),
     "prompt": (
-        "Transform this dictated text into a clear coding-agent prompt. "
-        "Keep it concise, actionable, and specific. Preserve all technical terms. "
-        "Return only the final prompt."
+        "Polish the dictation for a coding assistant. Copyedit it in its original language. "
+        "Preserve the request, facts, names, and technical terms. Return only the polished dictation."
     ),
     "commit": (
-        "Transform this dictated change description into a concise commit message. "
-        "Prefer Conventional Commits. Return only the commit message."
+        "Summarize the dictated changes using words from the original language. "
+        "Return only one Conventional Commit subject. Use fix: for bug fixes and feat: for new features. "
+        "Preserve the language of every phrase. "
+        "The output language comes from the input text. Copy the original meaningful words where possible."
     ),
-    "docs": (
-        "Rewrite this dictated text as clear technical documentation. "
-        "Preserve meaning and technical accuracy. Return only the documentation text."
+    "docs": _PRESERVE_LANGUAGE + (
+        "Edit the dictated technical instructions for clarity. Fix punctuation and phrasing. "
+        "Keep the original language and menu labels. Return only the edited dictation."
     ),
-    "command": (
-        "Transform this dictated instruction into a short, direct command "
-        "for a coding agent. Return only the command."
+    "command": _PRESERVE_LANGUAGE + (
+        "Edit the dictated instruction for clarity and brevity. Preserve the wording of any literal "
+        "shell command, options, and paths. Return only the edited instruction in the original language."
     ),
 }
-
-
-_PRESERVE_LANGUAGE = (
-    "Keep the original language or mixture of languages in the dictated text. "
-    "Do not translate unless the user explicitly requests translation."
-)
 
 
 def default_system_prompt(mode: str, language: str = "") -> str:
@@ -77,8 +79,8 @@ def default_system_prompt(mode: str, language: str = "") -> str:
     if prompt is None:
         return ""
     if re.fullmatch(r"[a-z]{2,3}", language or ""):
-        return f"{prompt} {_PRESERVE_LANGUAGE} Whisper language code: {language}."
-    return f"{prompt} {_PRESERVE_LANGUAGE}"
+        return f"{prompt} Whisper language code: {language}."
+    return prompt
 
 
 RequestFn = Callable[[str, bytes, dict[str, str], int], bytes]
@@ -96,7 +98,13 @@ def _provider_http_error(action: str, code: int, reason: str, api_key_env: str, 
     status = f"HTTP {code}" + (f" {reason}" if reason else "")
     if code not in (401, 403):
         return f"{action} failed: {status}"
-    if not is_valid_env_var_name(api_key_env):
+    if not api_key_env.strip():
+        auth_hint = (
+            "No API key was sent. This endpoint requires authorization or denied this request. "
+            "Set the provider's environment-variable name in AI Polish and restart JasperVoice "
+            "after adding the key to Windows."
+        )
+    elif not is_valid_env_var_name(api_key_env):
         auth_hint = (
             "The API key field must contain an environment-variable name, not the key itself. "
             "Use a name like OPENCODE_API_KEY, set that variable outside JasperVoice, "
@@ -105,7 +113,7 @@ def _provider_http_error(action: str, code: int, reason: str, api_key_env: str, 
     elif has_key:
         auth_hint = (
             f"The key loaded from {api_key_env.strip()} was rejected by the provider. "
-            "Check that the key is valid and allowed to list models."
+            "Check the key and its permissions for this endpoint and model."
         )
     else:
         alt = _detect_alt_api_key_env(api_key_env)
@@ -116,7 +124,7 @@ def _provider_http_error(action: str, code: int, reason: str, api_key_env: str, 
         )
         auth_hint = (
             f"No value is set for {api_key_env.strip()} in this JasperVoice process. "
-            "Open Settings -> AI Polish and click 'Test' for step-by-step setup. "
+            "Open AI Polish and use Check key for setup details. "
             "For remote APIs: set the env var in Windows (Win+R -> sysdm.cpl -> "
             "Advanced -> Environment Variables), then close and reopen JasperVoice. "
             "For local servers (Ollama, LM Studio): leave the field empty."
@@ -142,8 +150,23 @@ def _model_fetch_http_error(code: int, reason: str, api_key_env: str, has_key: b
     return _provider_http_error("Model list request", code, reason, api_key_env, has_key)
 
 
-def _api_call_http_error(code: int, reason: str, api_key_env: str, has_key: bool) -> str:
-    return _provider_http_error("AI Polish request", code, reason, api_key_env, has_key)
+def _api_call_http_error(error: _HTTPError, api_key_env: str, has_key: bool) -> str:
+    message = _provider_http_error("AI Polish request", error.code, str(error.reason or ""), api_key_env, has_key)
+    if error.code != 400:
+        return message
+
+    try:
+        body = _json.loads(error.read(8192))
+    except (OSError, ValueError):
+        return message
+
+    details = body.get("error") if isinstance(body, dict) else None
+    if isinstance(details, dict) and (
+        details.get("type") == "exceed_context_size_error"
+        or details.get("code") == "context_length_exceeded"
+    ):
+        return f"{message}. The dictation and style prompt exceed the model's context window."
+    return message
 
 
 def diagnose_polish_config(base_url: str, api_key_env: str = "OPENCODE_API_KEY") -> dict:
@@ -416,7 +439,7 @@ class OpenCodePostProcessor(PostProcessor):
             resp_bytes = self._request_fn(url, body, headers, self._timeout_s)
         except _HTTPError as e:
             raise PostProcessorError(
-                _api_call_http_error(e.code, str(e.reason or ""), self._api_key_env, bool(api_key))
+                _api_call_http_error(e, self._api_key_env, bool(api_key))
             ) from e
         except PostProcessorError:
             raise
@@ -428,10 +451,23 @@ class OpenCodePostProcessor(PostProcessor):
         except Exception as e:
             raise PostProcessorError(f"Invalid JSON response from API: {e}") from e
 
-        choices = resp_data.get("choices")
-        if not choices or not isinstance(choices, list):
+        choices = resp_data.get("choices") if isinstance(resp_data, dict) else None
+        if not isinstance(choices, list) or not choices:
             raise PostProcessorError("API response missing 'choices' array")
-        content = choices[0].get("message", {}).get("content", "")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise PostProcessorError("API response has an invalid completion choice")
+
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "length":
+            raise PostProcessorError("The model stopped at its token limit before AI Polish completed")
+        if finish_reason == "content_filter":
+            raise PostProcessorError("The provider's content filter stopped AI Polish")
+        if finish_reason in ("tool_calls", "function_call"):
+            raise PostProcessorError("The model returned a tool call instead of polished text")
+
+        message = choice.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip():
             raise PostProcessorError("API returned empty content")
 

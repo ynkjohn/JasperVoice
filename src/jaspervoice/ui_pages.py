@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QKeySequenceEdit,
     QLabel,
     QLineEdit,
@@ -327,7 +328,7 @@ class BasePage(QWidget):
         self._extra_terms: list[str] = []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(44, 34, 44, 34)
+        root.setContentsMargins(30, 26, 30, 28)
         root.setSpacing(18)
 
         head = QHBoxLayout()
@@ -344,7 +345,7 @@ class BasePage(QWidget):
         root.addLayout(head)
 
         self.body = QVBoxLayout()
-        self.body.setSpacing(10)
+        self.body.setSpacing(12)
         root.addLayout(self.body, 1)
 
         self._build()
@@ -380,15 +381,18 @@ class BasePage(QWidget):
 class OverviewPage(BasePage):
     page_id = "overview"
     title = "Overview"
-    description = "Everything runs on this machine. Hold the hotkey in any app and speak."
+    description = "Check your microphone and try dictation before using the global hotkey."
 
     def _build(self) -> None:
         self._extra_terms = ["statistics", "mic check", "test dictation", "recent transcriptions", "pipeline"]
 
         self.test_btn = self.add_action(QPushButton("Test dictation"))
+        self.test_btn.setProperty("primary", True)
         self.test_btn.clicked.connect(self._on_test_clicked)
 
         self.test_status = hint("")
+        self.test_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.test_status.hide()
         self.body.addWidget(self.test_status)
 
         # Pipeline summary strip
@@ -398,14 +402,9 @@ class OverviewPage(BasePage):
         srow.setContentsMargins(20, 14, 20, 14)
         srow.setSpacing(14)
         self._pipe_values: dict[str, QLabel] = {}
-        for i, (tag, key) in enumerate([
-            ("TRIGGER", "trigger"), ("CAPTURE", "capture"),
-            ("TRANSCRIBE", "transcribe"), ("INJECT", "inject"),
-        ]):
-            if i:
-                arrow = QLabel("→")
-                arrow.setProperty("role", "hint")
-                srow.addWidget(arrow, 0)
+        for tag, key in [
+            ("Hotkey", "trigger"), ("Whisper", "transcribe"), ("Delivery", "inject"),
+        ]:
             col = QVBoxLayout()
             col.setSpacing(2)
             tag_lbl = QLabel(tag)
@@ -413,6 +412,7 @@ class OverviewPage(BasePage):
             col.addWidget(tag_lbl)
             val = QLabel("—")
             val.setProperty("role", "fieldlabel")
+            val.setWordWrap(True)
             col.addWidget(val)
             self._pipe_values[key] = val
             srow.addLayout(col, 1)
@@ -421,20 +421,21 @@ class OverviewPage(BasePage):
         # Stat tiles
         tiles = QHBoxLayout()
         tiles.setSpacing(12)
-        self.tile_count = StatTile("TRANSCRIPTIONS")
-        self.tile_words = StatTile("WORDS DICTATED")
-        self.tile_audio = StatTile("AUDIO CAPTURED")
-        self.tile_wpm = StatTile("AVG WPM")
+        self.tile_count = StatTile("Transcriptions")
+        self.tile_words = StatTile("Words dictated")
+        self.tile_audio = StatTile("Audio captured")
+        self.tile_wpm = StatTile("Avg. WPM")
         for t in (self.tile_count, self.tile_words, self.tile_audio, self.tile_wpm):
             tiles.addWidget(t, 1)
-        self.body.addLayout(tiles)
-
-        # Mic check + recent, side by side
-        cols = QHBoxLayout()
-        cols.setSpacing(12)
-
         mic_frame, mic_box = _panel()
-        mic_box.addWidget(_panel_header("MIC CHECK", "mic"))
+        mic_head = QHBoxLayout()
+        mic_head.addWidget(_panel_header("Mic check", "mic"), 1)
+        self.meter_status = hint("")
+        self.meter_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.meter_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.meter_status.setMinimumWidth(200)
+        mic_head.addWidget(self.meter_status)
+        mic_box.addLayout(mic_head)
         self.meter = LevelMeter()
         mic_box.addWidget(self.meter)
         mic_row = QHBoxLayout()
@@ -447,15 +448,12 @@ class OverviewPage(BasePage):
         self.meter_btn.clicked.connect(self._toggle_meter)
         mic_row.addWidget(self.meter_btn, 0)
         mic_box.addLayout(mic_row)
-        mic_box.addStretch(1)
-        # Ignored width policy: the 50/50 split comes purely from the stretch
-        # factors, not from whichever panel has the larger size hint.
-        mic_frame.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        cols.addWidget(mic_frame, 1)
+        self.body.addWidget(mic_frame)
+        self.body.addLayout(tiles)
 
         recent_frame, recent_box = _panel()
         head = QHBoxLayout()
-        head.addWidget(_panel_header("RECENT", "clock"), 1)
+        head.addWidget(_panel_header("Recent transcriptions", "clock"), 1)
         view_all = QPushButton("View all")
         view_all.clicked.connect(lambda: self.shell.show_page("history"))
         head.addWidget(view_all, 0)
@@ -464,32 +462,39 @@ class OverviewPage(BasePage):
         self._recent_box.setSpacing(8)
         recent_box.addLayout(self._recent_box)
         recent_box.addStretch(1)
-        recent_frame.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        cols.addWidget(recent_frame, 1)
-
-        self.body.addLayout(cols)
+        self.body.addWidget(recent_frame)
         self.body.addStretch(1)
 
         self.shell.mic_source.levels.connect(self.meter.set_levels)
+        self.shell.mic_source.status.connect(self._show_meter_status)
 
     # -- test dictation --
 
     def _on_test_clicked(self) -> None:
+        self.test_status.show()
         self.test_status.setText("Listening… speak now (records about 4 seconds).")
         self.shell.request_test_dictation()
 
     def set_test_result(self, text: str) -> None:
+        self.test_status.show()
         self.test_status.setText(f"Test result: {text}" if text else "Test result: (no speech detected)")
 
     # -- mic meter --
 
     def _toggle_meter(self) -> None:
-        paused = self.meter.is_active()  # toggling: active -> pause
-        self.shell.set_meter_paused(paused)
+        if self.meter_btn.text() == "Retry":
+            self.shell.restart_mic_meter()
+        else:
+            self.shell.set_meter_paused(not self.shell.meter_paused)
+
+    def _show_meter_status(self, text: str) -> None:
+        self.meter.reset()
+        self.meter_status.setText(text)
+        self.sync_meter_button(self.shell.meter_paused)
 
     def sync_meter_button(self, paused: bool) -> None:
-        self.meter_btn.setText("Resume" if paused else "Pause")
-        self.meter.set_active(not paused)
+        unavailable = self.meter_status.text().startswith("Microphone unavailable")
+        self.meter_btn.setText("Resume" if paused else "Retry" if unavailable else "Pause")
 
     def _on_device_changed(self) -> None:
         key = self.device_combo.currentData()
@@ -498,7 +503,6 @@ class OverviewPage(BasePage):
         audio_page = self.shell.page("audio")
         if audio_page is not None:
             audio_page.set_device_key(str(key))
-        self.shell.restart_mic_meter()
 
     # -- refresh --
 
@@ -514,12 +518,11 @@ class OverviewPage(BasePage):
         hotkey = " + ".join(p.strip().title() for p in str(cfg.get("hotkey", "")).split("+") if p.strip())
         mode = "hold" if cfg.get("hotkey_mode") == "push_to_talk" else "toggle"
         self._pipe_values["trigger"].setText(f"{hotkey} ({mode})")
-        device = cfg.get("input_device", "default")
-        self._pipe_values["capture"].setText("System default mic" if device == "default" else str(device))
         info = self.shell.runtime_info()
         resolved = info.get("resolved_device") or cfg.get("device", "auto")
         self._pipe_values["transcribe"].setText(f"whisper {cfg.get('model_size')} · {resolved}")
-        self._pipe_values["inject"].setText("Active window · Ctrl+V paste")
+        delivery = "Direct typing" if cfg.get("injection_mode") == "type" else "Paste (Ctrl+V)"
+        self._pipe_values["inject"].setText(delivery)
 
         history = self.shell.history
         if history is None:
@@ -924,8 +927,8 @@ class GeneralPage(BasePage):
                   "Registers JasperVoice in the Windows startup list (installed builds only).")
         self.start_minimized = Switch()
         self.start_minimized.toggled.connect(dirty)
-        g.add_row("Start minimized to tray", self.start_minimized,
-                  "When off, this window opens on startup.")
+        g.add_row("Start sign-in launches in the tray", self.start_minimized,
+                  "Opening JasperVoice manually always brings the window forward.")
 
         g = self.add_group("OVERLAY")
         self.show_overlay = Switch()
@@ -1170,21 +1173,20 @@ class AudioPage(BasePage):
         g.add_row("Microphone", device_row,
                   '"System default" follows the Windows default input device automatically.')
 
-        g = self.add_group("LIVE CHECK")
-        meter_col = QWidget()
-        mbox = QVBoxLayout(meter_col)
-        mbox.setContentsMargins(0, 0, 0, 0)
-        mbox.setSpacing(6)
+        g = self.add_group("Mic check")
         self.meter = LevelMeter()
-        self.meter.setMinimumWidth(480)
-        self.meter.setMinimumHeight(88)
-        mbox.addWidget(self.meter)
+        g.add_widget(self.meter)
         self.meter_btn = QPushButton("Pause")
-        self.meter_btn.setMaximumWidth(110)
+        self.meter_btn.setMinimumWidth(88)
         self.meter_btn.clicked.connect(self._toggle_meter)
-        mbox.addWidget(self.meter_btn)
-        g.add_row("Input level", meter_col,
-                  "Speak normally — the bars should react. If not, check Windows microphone permissions.")
+        self.meter_status = hint("")
+        self.meter_status.setTextFormat(Qt.TextFormat.PlainText)
+        check_row = QWidget()
+        check_layout = QHBoxLayout(check_row)
+        check_layout.setContentsMargins(0, 4, 0, 0)
+        check_layout.addWidget(self.meter_status, 1)
+        check_layout.addWidget(self.meter_btn)
+        g.add_widget(check_row)
 
         g = self.add_group("CAPTURE")
         self.noise_gate = Switch()
@@ -1204,6 +1206,7 @@ class AudioPage(BasePage):
 
         self.body.addStretch(1)
         self.shell.mic_source.levels.connect(self.meter.set_levels)
+        self.shell.mic_source.status.connect(self._show_meter_status)
 
     def current_device(self) -> str:
         return str(self.device_combo.currentData() or "default")
@@ -1230,11 +1233,19 @@ class AudioPage(BasePage):
         self.shell.toast("Device list refreshed")
 
     def _toggle_meter(self) -> None:
-        self.shell.set_meter_paused(self.meter.is_active())
+        if self.meter_btn.text() == "Retry":
+            self.shell.restart_mic_meter()
+        else:
+            self.shell.set_meter_paused(not self.shell.meter_paused)
+
+    def _show_meter_status(self, text: str) -> None:
+        self.meter.reset()
+        self.meter_status.setText(text)
+        self.sync_meter_button(self.shell.meter_paused)
 
     def sync_meter_button(self, paused: bool) -> None:
-        self.meter_btn.setText("Resume" if paused else "Pause")
-        self.meter.set_active(not paused)
+        unavailable = self.meter_status.text().startswith("Microphone unavailable")
+        self.meter_btn.setText("Resume" if paused else "Retry" if unavailable else "Pause")
 
     def load_from(self, cfg: dict) -> None:
         _populate_device_combo(self.device_combo, str(cfg.get("input_device", "default")))
@@ -1438,7 +1449,7 @@ class ModelPage(BasePage):
         self._thread = QThread()
         self._worker = _BgWorker(fn)
         self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
+        self._thread.started.connect(self._worker.run, Qt.ConnectionType.QueuedConnection)
         self._worker.done.connect(on_done, Qt.ConnectionType.QueuedConnection)
         self._worker.error.connect(on_error, Qt.ConnectionType.QueuedConnection)
         self._thread.start()
@@ -1635,7 +1646,7 @@ class PolishPage(BasePage):
         self.fetch_btn.setMinimumWidth(140)
         self.fetch_btn.clicked.connect(self._fetch_models)
         frow.addWidget(self.fetch_btn, 0)
-        self.test_btn = QPushButton("Test")
+        self.test_btn = QPushButton("Check key")
         self.test_btn.setMinimumWidth(80)
         self.test_btn.setToolTip(
             "Check endpoint, API key env var, and any auto-detected alternative. "
@@ -1643,7 +1654,8 @@ class PolishPage(BasePage):
         )
         self.test_btn.clicked.connect(self._test_config)
         frow.addWidget(self.test_btn, 0)
-        self.fetch_status = hint("Click Test to verify the env var, or Fetch models to pull the provider's list.")
+        self.fetch_status = hint("Fetch models checks the endpoint. Check key inspects your Windows environment.")
+        self.fetch_status.setTextFormat(Qt.TextFormat.PlainText)
         self.fetch_status.setWordWrap(True)
         frow.addWidget(self.fetch_status, 1)
         g.add_widget(fetch_row)
@@ -1699,6 +1711,15 @@ class PolishPage(BasePage):
         g.add_row("System prompt", prompt_box,
                   "Leave blank to use the default. A custom prompt replaces the default for this style.")
 
+        self.preview_status = hint("")
+        self.preview_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.preview_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.preview_btn = QPushButton("Preview Polish…")
+        self.preview_btn.clicked.connect(self._preview)
+        g.add_row("Test with sample text", self.preview_btn,
+                  "Sends the sample to the endpoint using the selected style and current edits.")
+        g.add_widget(self.preview_status)
+
         self.body.addStretch(1)
 
     def _on_enabled_toggled(self, checked: bool) -> None:
@@ -1746,7 +1767,13 @@ class PolishPage(BasePage):
         from .postprocessing import diagnose_polish_config
 
         base_url = self.base_url.text().strip()
-        key_env = self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
+        key_env = self.api_key_env.text().strip()
+        if not key_env:
+            self.fetch_status.setText(
+                "No API key configured. This works with local servers that allow unauthenticated requests."
+                if base_url else "Endpoint is empty. Fill it in above."
+            )
+            return
         diag = diagnose_polish_config(base_url, key_env)
 
         lines: list[str] = []
@@ -1780,7 +1807,7 @@ class PolishPage(BasePage):
                 )
         else:
             lines.append(
-                f"API key: '{diag['api_key_env']}' is not a valid env var name."
+                "API key: the field does not contain a valid env var name."
             )
             lines.append("  Use a name like OPENCODE_API_KEY, not the key itself.")
 
@@ -1793,24 +1820,62 @@ class PolishPage(BasePage):
         if not base_url:
             self.fetch_status.setText("Fill in the endpoint first.")
             return
-        key_env = self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
-        if not is_valid_env_var_name(key_env):
+        key_env = self.api_key_env.text().strip()
+        if key_env and not is_valid_env_var_name(key_env):
             self.fetch_status.setText(
                 "API key env var must be a variable name like OPENCODE_API_KEY, not the key itself."
             )
             return
         timeout = int(self.timeout_spin.value())
-        self.fetch_btn.setEnabled(False)
         self.fetch_status.setText("Fetching model list…")
 
         from .postprocessing import fetch_available_models
 
+        self._start_request(lambda: fetch_available_models(base_url, key_env, timeout),
+                            self._on_models_fetched, self._on_fetch_error)
+
+    def _preview(self) -> None:
+        if self._thread is not None:
+            return
+        mode = self.mode_seg.current_key()
+        base_url = self.base_url.text().strip()
+        key_env = self.api_key_env.text().strip()
+        if mode == "raw" or not base_url or (key_env and not is_valid_env_var_name(key_env)):
+            self.preview_status.setText("Choose a Polish style and set a valid endpoint and API key field first.")
+            return
+        language = str(self.shell.lang_combo.currentData() or "auto")
+        samples = {
+            "de": "hallo team ich habe den fehler beim speichern behoben bitte prüft die änderung",
+            "pt": "oi equipe eu corrigi a falha ao salvar por favor revisem a mudança",
+            "es": "hola equipo corregí el error al guardar por favor revisen el cambio",
+        }
+        sample, ok = QInputDialog.getMultiLineText(
+            self, "Preview AI Polish", "Sample sent to your configured endpoint",
+            samples.get(language, "hi team i fixed the save bug please review the change"),
+        )
+        if not ok or not sample.strip():
+            return
+        from .postprocessing import OpenCodePostProcessor
+
+        processor = OpenCodePostProcessor(
+            base_url, api_key_env=key_env,
+            fast_model=self.fast_model.currentText().strip(),
+            smart_model=self.smart_model.currentText().strip(),
+            timeout_s=self.timeout_spin.value(), custom_prompts=self._custom_prompts,
+        )
+        self.preview_status.setText("Running Polish preview…")
+        self._start_request(lambda: processor.process(sample.strip(), mode, language=language),
+                            self._on_preview_done, self._on_preview_error)
+
+    def _start_request(self, fn, done, error) -> None:
+        self.fetch_btn.setEnabled(False)
+        self.preview_btn.setEnabled(False)
         self._thread = QThread()
-        self._worker = _BgWorker(lambda: fetch_available_models(base_url, key_env, timeout))
+        self._worker = _BgWorker(fn)
         self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
-        self._worker.done.connect(self._on_models_fetched, Qt.ConnectionType.QueuedConnection)
-        self._worker.error.connect(self._on_fetch_error, Qt.ConnectionType.QueuedConnection)
+        self._thread.started.connect(self._worker.run, Qt.ConnectionType.QueuedConnection)
+        self._worker.done.connect(done, Qt.ConnectionType.QueuedConnection)
+        self._worker.error.connect(error, Qt.ConnectionType.QueuedConnection)
         self._thread.start()
 
     def _teardown_thread(self) -> None:
@@ -1819,6 +1884,16 @@ class PolishPage(BasePage):
             self._thread.wait(2000)
             self._thread = None
         self._worker = None
+        self.fetch_btn.setEnabled(True)
+        self.preview_btn.setEnabled(True)
+
+    def _on_preview_done(self, result) -> None:
+        self._teardown_thread()
+        self.preview_status.setText(f"{result.model} · {result.latency_ms} ms\n{result.text}")
+
+    def _on_preview_error(self, msg: str) -> None:
+        self._teardown_thread()
+        self.preview_status.setText(f"Polish preview failed: {msg}")
 
     def shutdown(self) -> None:
         """App-exit path: bounded wait, then force-stop (see ModelPage.shutdown)."""
@@ -1832,7 +1907,6 @@ class PolishPage(BasePage):
 
     def _on_models_fetched(self, models) -> None:
         self._teardown_thread()
-        self.fetch_btn.setEnabled(True)
         self._apply_fetched_models(list(models or []))
 
     def _apply_fetched_models(self, models: list) -> None:
@@ -1840,20 +1914,23 @@ class PolishPage(BasePage):
         if not models:
             self.fetch_status.setText("The provider returned no models.")
             return
-        for combo in (self.fast_model, self.smart_model):
+        for combo, key in ((self.fast_model, "opencode_fast_model"),
+                           (self.smart_model, "opencode_smart_model")):
             current = combo.currentText()
             combo.blockSignals(True)
             combo.clear()
             combo.addItems([str(m) for m in models])
-            combo.setEditText(current)
+            auto_select = len(models) == 1 and current in ("", DEFAULT_CONFIG[key])
+            combo.setEditText(str(models[0]) if auto_select else current)
             combo.blockSignals(False)
+            if auto_select:
+                self.shell.mark_dirty()
         self.fetch_status.setText(
             f"{len(models)} models loaded — pick one for Fast and one for Smart.")
         self.shell.toast(f"Fetched {len(models)} models")
 
     def _on_fetch_error(self, msg: str) -> None:
         self._teardown_thread()
-        self.fetch_btn.setEnabled(True)
         self.fetch_status.setText(f"Could not fetch models: {msg}")
 
     # -- load / collect --
@@ -1877,14 +1954,12 @@ class PolishPage(BasePage):
         mode = self.mode_seg.current_key()
         if enabled and provider == "none":
             provider = "opencode"
-        if enabled and mode == "raw":
-            mode = "clean"
         cfg["post_processing_enabled"] = enabled
         cfg["post_processing_provider"] = provider
         cfg["opencode_base_url"] = self.base_url.text().strip()
-        key_env = self.api_key_env.text().strip() or DEFAULT_CONFIG["opencode_api_key_env"]
+        key_env = self.api_key_env.text().strip()
         cfg["opencode_api_key_env"] = (
-            key_env if is_valid_env_var_name(key_env) else DEFAULT_CONFIG["opencode_api_key_env"]
+            key_env if not key_env or is_valid_env_var_name(key_env) else DEFAULT_CONFIG["opencode_api_key_env"]
         )
         cfg["opencode_fast_model"] = (
             self.fast_model.currentText().strip() or DEFAULT_CONFIG["opencode_fast_model"]
@@ -1946,8 +2021,8 @@ class UpdatesPage(BasePage):
         self.offline_btn = QPushButton("Install from file…")
         self.offline_btn.clicked.connect(self._install_from_file)
         g.add_row("Installer file", self.offline_btn,
-                  "Runs an installer .exe you downloaded yourself (air-gapped). "
-                  "Its integrity is checked before it runs.")
+                  "Keep the release's SHA256SUMS beside the downloaded installer. "
+                  "JasperVoice checks it before opening Setup.")
 
         self.body.addStretch(1)
 
@@ -1964,21 +2039,16 @@ class UpdatesPage(BasePage):
         )
         if not path:
             return
-        try:
-            installer = updater.stage_local_installer(path)
-        except updater.UpdateError as e:
-            QMessageBox.warning(self, "JasperVoice", f"Cannot use that file:\n{e}")
-            return
         confirm = QMessageBox.question(
             self, "JasperVoice",
-            f"Run this installer now?\n\n{installer.name}\n\n"
-            "JasperVoice will close while it updates, then relaunch.",
+            f"Verify and open {Path(path).name}?\n\n"
+            "JasperVoice will close and the Setup wizard will open.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
         try:
-            updater.launch_installer(installer, silent=False)
+            updater.launch_installer(path, silent=False)
         except updater.UpdateError as e:
             QMessageBox.warning(self, "JasperVoice", f"Could not launch installer:\n{e}")
             return

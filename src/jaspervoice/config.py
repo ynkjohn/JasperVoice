@@ -157,16 +157,17 @@ def _coerce(cfg: dict[str, Any]) -> dict[str, Any]:
         out["post_processing_provider"] = "none"
     if out["post_processing_enabled"] and out["post_processing_provider"] == "none":
         out["post_processing_provider"] = "opencode"
-    if out["post_processing_enabled"] and out["output_mode"] == "raw":
-        out["output_mode"] = "clean"
     if not isinstance(out.get("opencode_base_url"), str):
         log.warning("Invalid opencode_base_url %r, falling back to ''", out.get("opencode_base_url"))
         out["opencode_base_url"] = ""
-    if not is_valid_env_var_name(out.get("opencode_api_key_env")):
+    key_env = out.get("opencode_api_key_env")
+    if isinstance(key_env, str) and not key_env.strip():
+        out["opencode_api_key_env"] = ""
+    elif not is_valid_env_var_name(key_env):
         log.warning("Invalid opencode_api_key_env, falling back to 'OPENCODE_API_KEY'")
         out["opencode_api_key_env"] = "OPENCODE_API_KEY"
     else:
-        out["opencode_api_key_env"] = out["opencode_api_key_env"].strip()
+        out["opencode_api_key_env"] = key_env.strip()
     if not isinstance(out.get("opencode_fast_model"), str) or not out["opencode_fast_model"].strip():
         log.warning("Invalid opencode_fast_model %r, falling back to default", out.get("opencode_fast_model"))
         out["opencode_fast_model"] = DEFAULT_CONFIG["opencode_fast_model"]

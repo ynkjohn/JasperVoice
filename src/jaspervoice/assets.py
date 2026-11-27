@@ -29,10 +29,15 @@ def _candidate_dirs() -> list[Path]:
     return dirs
 
 
-def icon_path() -> Optional[str]:
-    """Return the absolute path to icon.ico, or None if it can't be found."""
+def asset_path(name: str) -> Path | None:
+    """Locate a packaged asset or its source-tree equivalent."""
     for d in _candidate_dirs():
-        candidate = d / ICON_FILENAME
+        candidate = d / name
         if candidate.is_file():
-            return str(candidate)
+            return candidate
     return None
+
+
+def icon_path() -> Optional[str]:
+    path = asset_path(ICON_FILENAME)
+    return str(path) if path is not None else None
