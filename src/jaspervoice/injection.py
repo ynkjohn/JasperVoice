@@ -1,4 +1,4 @@
-"""Inject text into the focused window via clipboard + SendInput Ctrl+V.
+"""Inject text into the focused window by pasting or Unicode typing.
 
 The INPUT struct must match the exact layout that the Windows API expects:
   - 32-bit: sizeof(INPUT) == 28
@@ -16,7 +16,6 @@ import logging
 import sys
 import time
 from ctypes import wintypes
-from typing import Optional
 
 import pyperclip
 
@@ -27,6 +26,8 @@ USER32 = ctypes.WinDLL("user32", use_last_error=True)
 VK_CONTROL = 0x11
 VK_V = 0x56
 KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+VK_RETURN = 0x0D
 INPUT_KEYBOARD = 1
 
 if sys.platform == "win32":
@@ -116,20 +117,57 @@ def _send_paste_win32() -> bool:
     return sent == n_inputs
 
 
-def _has_focused_window() -> bool:
-    if not sys.platform == "win32":
+def _send_text_win32(text: str) -> bool:
+    """Type Unicode text with SendInput without reading or writing the clipboard."""
+    if INPUT is None:
         return False
-    hwnd = USER32.GetForegroundWindow()
-    return bool(hwnd)
+    # Line breaks are sent as real Enter key presses: many apps ignore a
+    # Unicode "\n" character event.
+    events: list[tuple[int, int, int]] = []  # (wVk, wScan, dwFlags)
+    for line_no, line in enumerate(text.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
+        if line_no:
+            events.append((VK_RETURN, 0, 0))
+            events.append((VK_RETURN, 0, KEYEVENTF_KEYUP))
+        units = line.encode("utf-16-le")
+        for i in range(0, len(units), 2):
+            unit = int.from_bytes(units[i:i + 2], "little")
+            events.append((0, unit, KEYEVENTF_UNICODE))
+            events.append((0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
+    if not events:
+        return False
+    arr = (INPUT * len(events))()
+    for ev, (vk, scan, flags) in zip(arr, events):
+        ev.type = INPUT_KEYBOARD
+        ev.u.ki.wVk = vk
+        ev.u.ki.wScan = scan
+        ev.u.ki.dwFlags = flags
+    sent = USER32.SendInput(len(arr), arr, ctypes.sizeof(INPUT))
+    if sent != len(arr):
+        err = ctypes.get_last_error()
+        log.warning("SendInput delivered %d/%d typing events (last error: %d)", sent, len(arr), err)
+    return sent == len(arr)
 
 
-def inject_text(text: str, settle_ms: int = 30) -> bool:
-    """Write `text` to the clipboard and trigger Ctrl+V on the focused window.
+def foreground_window() -> int | None:
+    return USER32.GetForegroundWindow() if sys.platform == "win32" else None
+
+
+def _has_focused_window() -> bool:
+    return bool(foreground_window())
+
+
+def inject_text(text: str, settle_ms: int = 30, mode: str = "paste") -> bool:
+    """Insert text into the focused window using the configured mode.
 
     Returns True if the keypress was sent. Empty text is a no-op.
     """
     if text is None or text == "":
         return False
+    if mode == "type":
+        if not _has_focused_window():
+            log.debug("No focused window; typing skipped")
+            return False
+        return _send_text_win32(text)
     pyperclip.copy(text)
     if settle_ms > 0:
         time.sleep(settle_ms / 1000.0)

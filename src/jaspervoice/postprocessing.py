@@ -66,6 +66,21 @@ PROMPTS: dict[str, str] = {
 }
 
 
+_PRESERVE_LANGUAGE = (
+    "Keep the original language or mixture of languages in the dictated text. "
+    "Do not translate unless the user explicitly requests translation."
+)
+
+
+def default_system_prompt(mode: str, language: str = "") -> str:
+    prompt = PROMPTS.get(mode)
+    if prompt is None:
+        return ""
+    if re.fullmatch(r"[a-z]{2,3}", language or ""):
+        return f"{prompt} {_PRESERVE_LANGUAGE} Whisper language code: {language}."
+    return f"{prompt} {_PRESERVE_LANGUAGE}"
+
+
 RequestFn = Callable[[str, bytes, dict[str, str], int], bytes]
 
 
@@ -209,7 +224,7 @@ class PostProcessor:
     returns a PostProcessResult. The default implementation is a no-op.
     """
 
-    def process(self, text: str, mode: str = "raw") -> PostProcessResult:
+    def process(self, text: str, mode: str = "raw", *, language: str = "") -> PostProcessResult:
         raise NotImplementedError
 
 
@@ -220,7 +235,7 @@ class NoopPostProcessor(PostProcessor):
     def __init__(self) -> None:
         pass
 
-    def process(self, text: str, mode: str = "raw") -> PostProcessResult:
+    def process(self, text: str, mode: str = "raw", *, language: str = "") -> PostProcessResult:
         t0 = time.monotonic()
         effective_mode = mode if mode in OUTPUT_MODES else DEFAULT_OUTPUT_MODE
         if mode not in OUTPUT_MODES:
@@ -346,6 +361,7 @@ class OpenCodePostProcessor(PostProcessor):
         smart_model: str = "Qwen3.7 Max",
         timeout_s: int = 20,
         request_fn: Optional[RequestFn] = None,
+        custom_prompts: Optional[dict[str, str]] = None,
     ) -> None:
         self._base_url = base_url
         self._api_key_env = api_key_env
@@ -353,8 +369,9 @@ class OpenCodePostProcessor(PostProcessor):
         self._smart_model = smart_model
         self._timeout_s = timeout_s
         self._request_fn: RequestFn = request_fn or _make_request
+        self._custom_prompts = dict(custom_prompts or {})
 
-    def process(self, text: str, mode: str = "raw") -> PostProcessResult:
+    def process(self, text: str, mode: str = "raw", *, language: str = "") -> PostProcessResult:
         t0 = time.monotonic()
 
         effective_mode = mode if mode in OUTPUT_MODES else DEFAULT_OUTPUT_MODE
@@ -376,7 +393,7 @@ class OpenCodePostProcessor(PostProcessor):
             )
 
         model = self._fast_model if effective_mode in FAST_MODES else self._smart_model
-        system_prompt = PROMPTS.get(effective_mode, PROMPTS["clean"])
+        system_prompt = self._custom_prompts.get(effective_mode) or default_system_prompt(effective_mode, language)
 
         payload = {
             "model": model,
@@ -415,7 +432,7 @@ class OpenCodePostProcessor(PostProcessor):
         if not choices or not isinstance(choices, list):
             raise PostProcessorError("API response missing 'choices' array")
         content = choices[0].get("message", {}).get("content", "")
-        if not content or not isinstance(content, str):
+        if not isinstance(content, str) or not content.strip():
             raise PostProcessorError("API returned empty content")
 
         latency_ms = round((time.monotonic() - t0) * 1000)

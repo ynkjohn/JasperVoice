@@ -35,11 +35,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, QSignalBlocker, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QButtonGroup,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -62,11 +65,11 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from . import config as cfg_mod
-from .config import DEFAULT_CONFIG, get_app_dir, get_models_dir
-from .postprocessing import OUTPUT_MODES, is_valid_env_var_name
+from .config import DEFAULT_CONFIG, LANGUAGES, get_app_dir, get_models_dir
+from .postprocessing import OUTPUT_MODES, default_system_prompt, is_valid_env_var_name
 from .theme import COLORS
+from .voice_commands import VoiceCommand, normalize_phrase, parse_voice_commands
 from .ui_widgets import (
-    LANGUAGES,
     LevelMeter,
     ModelCard,
     SegmentedControl,
@@ -937,13 +940,20 @@ class GeneralPage(BasePage):
         g.add_row("Position", self.overlay_pos)
 
         g = self.add_group("INJECTION")
+        self.injection_mode = SegmentedControl([("paste", "Paste"), ("type", "Type")])
+        self.injection_mode.changed.connect(lambda _k: dirty())
+        self.injection_mode.changed.connect(self._update_paste_delay_enabled)
+        g.add_row("Text insertion", self.injection_mode,
+                  "Type leaves the clipboard alone. Line breaks send Enter, which may submit "
+                  "messages in some apps.")
         self.paste_delay = QSpinBox()
         self.paste_delay.setRange(0, 200)
         self.paste_delay.setSuffix(" ms")
         self.paste_delay.setSingleStep(5)
         self.paste_delay.valueChanged.connect(dirty)
         g.add_row("Paste delay", self.paste_delay,
-                  "Pause before pasting. Raise it if text arrives truncated.")
+                  "Pause before pasting. Raise it if text arrives truncated. "
+                  "Only used in Paste mode.")
         self.min_duration = QSpinBox()
         self.min_duration.setRange(50, 2000)
         self.min_duration.setSuffix(" ms")
@@ -953,6 +963,9 @@ class GeneralPage(BasePage):
                   "Recordings shorter than this are discarded (accidental taps).")
 
         self.body.addStretch(1)
+
+    def _update_paste_delay_enabled(self, *_args) -> None:
+        self.paste_delay.setEnabled(self.injection_mode.current_key() == "paste")
 
     def load_from(self, cfg: dict) -> None:
         try:
@@ -966,6 +979,8 @@ class GeneralPage(BasePage):
         self.start_minimized.setChecked(bool(cfg.get("start_minimized", True)))
         self.show_overlay.setChecked(bool(cfg.get("show_overlay", True)))
         self.overlay_pos.set_current_key(str(cfg.get("overlay_position", "bottom_right")))
+        self.injection_mode.set_current_key(str(cfg.get("injection_mode", "paste")))
+        self._update_paste_delay_enabled()
         self.paste_delay.setValue(int(cfg.get("paste_delay_ms", 15)))
         self.min_duration.setValue(int(cfg.get("min_recording_ms", 200)))
 
@@ -978,11 +993,157 @@ class GeneralPage(BasePage):
         cfg["start_minimized"] = self.start_minimized.isChecked()
         cfg["show_overlay"] = self.show_overlay.isChecked()
         cfg["overlay_position"] = self.overlay_pos.current_key()
+        cfg["injection_mode"] = self.injection_mode.current_key()
         cfg["paste_delay_ms"] = int(self.paste_delay.value())
         cfg["min_recording_ms"] = int(self.min_duration.value())
 
 
 # --- Audio & Mic -----------------------------------------------------------------
+
+class CommandsPage(BasePage):
+    page_id = "commands"
+    title = "Voice commands"
+    description = "Use a complete dictated phrase to run a saved Windows action."
+
+    def _build(self) -> None:
+        self._commands: list[VoiceCommand] = []
+        self.enabled = Switch()
+        self.enabled.toggled.connect(self.shell.mark_dirty)
+        group = self.add_group("VOICE COMMANDS")
+        group.add_row(
+            "Enable voice commands", self.enabled,
+            "A matching phrase runs its action instead of inserting text. "
+            "Case, final punctuation, and extra spaces are ignored.",
+        )
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Phrase", "Action", "Target"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.verticalHeader().hide()
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.itemSelectionChanged.connect(self._update_buttons)
+        self.table.cellDoubleClicked.connect(lambda *_: self._edit_command(self.table.currentRow()))
+        self.body.addWidget(self.table)
+
+        actions = QHBoxLayout()
+        add = QPushButton("Add command")
+        add.clicked.connect(lambda: self._edit_command())
+        self.edit = QPushButton("Edit")
+        self.edit.clicked.connect(lambda: self._edit_command(self.table.currentRow()))
+        self.remove = QPushButton("Remove")
+        self.remove.clicked.connect(self._remove_command)
+        for button in (add, self.edit, self.remove):
+            actions.addWidget(button)
+        actions.addStretch(1)
+        self.body.addLayout(actions)
+        self.body.addStretch(1)
+
+    def _update_buttons(self) -> None:
+        selected = bool(self.table.selectedItems())
+        self.edit.setEnabled(selected)
+        self.remove.setEnabled(selected)
+
+    def _refresh(self) -> None:
+        self.table.clearContents()
+        self.table.setRowCount(len(self._commands))
+        self.table.clearSelection()
+        for row, command in enumerate(self._commands):
+            label = "Keyboard shortcut" if command.action == "shortcut" else "Run executable"
+            for column, value in enumerate((command.phrase, label, command.target)):
+                self.table.setItem(row, column, QTableWidgetItem(value))
+        self._update_buttons()
+
+    def _remove_command(self) -> None:
+        self._commands.pop(self.table.currentRow())
+        self._refresh()
+        self.shell.mark_dirty()
+
+    def _edit_command(self, index: int = -1) -> None:
+        current = self._commands[index] if index >= 0 else VoiceCommand("", "shortcut", "")
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit voice command" if index >= 0 else "Add voice command")
+        dialog.setMinimumWidth(520)
+        layout = QVBoxLayout(dialog)
+        fields = SettingsGroup("COMMAND")
+        phrase = QLineEdit(current.phrase)
+        phrase.setPlaceholderText("e.g. Undo")
+        fields.add_row("Spoken phrase", phrase)
+        action = QComboBox()
+        action.addItem("Keyboard shortcut", "shortcut")
+        action.addItem("Run executable", "launch")
+        action.setCurrentIndex(action.findData(current.action))
+        fields.add_row("Action", action)
+        target = QLineEdit(current.target)
+        target.setMinimumWidth(300)
+        browse = QPushButton("Browse")
+        target_row = QWidget()
+        target_layout = QHBoxLayout(target_row)
+        target_layout.setContentsMargins(0, 0, 0, 0)
+        target_layout.addWidget(target)
+        target_layout.addWidget(browse)
+        fields.add_row("Shortcut or executable", target_row)
+        arguments = QLineEdit(current.arguments)
+        fields.add_row("Optional arguments", arguments)
+        layout.addWidget(fields)
+        error = hint("")
+        layout.addWidget(error)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        layout.addWidget(buttons)
+
+        def update_target_hint() -> None:
+            launch = action.currentData() == "launch"
+            target.setPlaceholderText(r"C:\Windows\System32\notepad.exe" if launch else "ctrl+z or windows+d")
+            browse.setVisible(launch)
+            arguments.setEnabled(launch)
+
+        def browse_executable() -> None:
+            path, _ = QFileDialog.getOpenFileName(dialog, "Choose executable", "", "Executables (*.exe)")
+            if path:
+                target.setText(str(Path(path)))
+
+        def save() -> None:
+            kind = action.currentData()
+            command = VoiceCommand(
+                phrase.text().strip(), kind, target.text().strip(),
+                arguments.text().strip() if kind == "launch" else "",
+            )
+            try:
+                command.validate()
+            except ValueError as exc:
+                error.setText(str(exc))
+                return
+            key = normalize_phrase(command.phrase)
+            if any(normalize_phrase(rule.phrase) == key for i, rule in enumerate(self._commands) if i != index):
+                error.setText("That spoken phrase already has a command.")
+                return
+            if index >= 0:
+                self._commands[index] = command
+            else:
+                self._commands.append(command)
+            dialog.accept()
+
+        action.currentIndexChanged.connect(update_target_hint)
+        browse.clicked.connect(browse_executable)
+        buttons.accepted.connect(save)
+        buttons.rejected.connect(dialog.reject)
+        update_target_hint()
+        phrase.setFocus()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._refresh()
+            self.shell.mark_dirty()
+
+    def load_from(self, cfg: dict) -> None:
+        self.enabled.setChecked(cfg.get("voice_commands_enabled") is True)
+        self._commands = parse_voice_commands(cfg.get("voice_commands"))
+        self._refresh()
+
+    def collect_into(self, cfg: dict) -> None:
+        cfg["voice_commands_enabled"] = self.enabled.isChecked()
+        cfg["voice_commands"] = [command.as_config() for command in self._commands]
+
 
 class AudioPage(BasePage):
     page_id = "audio"
@@ -1432,7 +1593,8 @@ class PolishPage(BasePage):
     def _build(self) -> None:
         dirty = self.shell.mark_dirty
         self._extra_terms = ["post-processing", "provider", "endpoint", "api key",
-                             "fetch models", "output style", "timeout"]
+                             "fetch models", "output style", "custom prompt", "timeout"]
+        self._custom_prompts: dict[str, str] = {}
         self._thread: Optional[QThread] = None
         self._worker: Optional[_BgWorker] = None
 
@@ -1523,6 +1685,19 @@ class PolishPage(BasePage):
         mbox.addWidget(self.mode_seg)
         mbox.addWidget(self.mode_hint)
         g.add_row("Style", mode_col)
+        self.custom_prompt = QPlainTextEdit()
+        self.custom_prompt.setMinimumWidth(420)
+        self.custom_prompt.setFixedHeight(120)
+        self.custom_prompt_reset = QPushButton("Restore default")
+        self.custom_prompt_reset.clicked.connect(self.custom_prompt.clear)
+        self.custom_prompt.textChanged.connect(self._on_prompt_edited)
+        prompt_box = QWidget()
+        prompt_layout = QVBoxLayout(prompt_box)
+        prompt_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_layout.addWidget(self.custom_prompt)
+        prompt_layout.addWidget(self.custom_prompt_reset, alignment=Qt.AlignmentFlag.AlignRight)
+        g.add_row("System prompt", prompt_box,
+                  "Leave blank to use the default. A custom prompt replaces the default for this style.")
 
         self.body.addStretch(1)
 
@@ -1539,7 +1714,26 @@ class PolishPage(BasePage):
         self.shell.mark_dirty()
 
     def _on_mode_changed(self, key: str) -> None:
+        self._show_style(key)
+        self.shell.mark_dirty()
+
+    def _show_style(self, key: str) -> None:
         self.mode_hint.setText(OUTPUT_MODE_HINTS.get(key, ""))
+        default_prompt = default_system_prompt(key)
+        self.custom_prompt.setEnabled(bool(default_prompt))
+        self.custom_prompt.setPlaceholderText(default_prompt or "Raw mode skips AI Polish.")
+        with QSignalBlocker(self.custom_prompt):
+            self.custom_prompt.setPlainText(self._custom_prompts.get(key, ""))
+        self.custom_prompt_reset.setEnabled(key in self._custom_prompts)
+
+    def _on_prompt_edited(self) -> None:
+        key = self.mode_seg.current_key()
+        text = self.custom_prompt.toPlainText().strip()
+        if text:
+            self._custom_prompts[key] = text
+        else:
+            self._custom_prompts.pop(key, None)
+        self.custom_prompt_reset.setEnabled(bool(text))
         self.shell.mark_dirty()
 
     # -- fetch models (background) --
@@ -1673,8 +1867,9 @@ class PolishPage(BasePage):
         self.fast_model.setEditText(str(cfg.get("opencode_fast_model", "")))
         self.smart_model.setEditText(str(cfg.get("opencode_smart_model", "")))
         self.timeout_spin.setValue(int(cfg.get("opencode_timeout_s", 20)))
+        self._custom_prompts = dict(cfg.get("polish_custom_prompts", {}))
         self.mode_seg.set_current_key(str(cfg.get("output_mode", "raw")))
-        self.mode_hint.setText(OUTPUT_MODE_HINTS.get(self.mode_seg.current_key(), ""))
+        self._show_style(self.mode_seg.current_key())
 
     def collect_into(self, cfg: dict) -> None:
         enabled = self.enabled.isChecked()
@@ -1699,6 +1894,7 @@ class PolishPage(BasePage):
         )
         cfg["opencode_timeout_s"] = int(self.timeout_spin.value())
         cfg["output_mode"] = mode
+        cfg["polish_custom_prompts"] = self._custom_prompts.copy()
 
 
 # --- Updates ------------------------------------------------------------------------
@@ -2070,6 +2266,7 @@ PAGE_CLASSES = [
     HistoryPage,
     DictionaryPage,
     GeneralPage,
+    CommandsPage,
     AudioPage,
     ModelPage,
     PolishPage,

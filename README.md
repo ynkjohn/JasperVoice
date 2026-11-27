@@ -21,7 +21,7 @@ Local push-to-talk voice dictation for Windows. Hold a hotkey, speak, release â€
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -e .
 .venv\Scripts\python.exe -m jaspervoice
 ```
 

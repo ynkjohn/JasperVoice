@@ -70,7 +70,7 @@ WINDOW_STATES = {
 
 NAV_GROUPS = [
     ("WORKSPACE", ["overview", "history", "dictionary"]),
-    ("CONFIGURE", ["general", "audio", "model", "polish", "updates"]),
+    ("CONFIGURE", ["general", "audio", "model", "polish", "commands", "updates"]),
     ("SYSTEM", ["diagnostics"]),
 ]
 
@@ -83,12 +83,13 @@ NAV_GLYPHS = {
     "audio": "mic",
     "model": "chip",
     "polish": "spark",
+    "commands": "sliders",
     "updates": "download",
     "diagnostics": "pulse",
 }
 
 # Pages that participate in load_from/collect_into (the dirty/apply cycle).
-SETTINGS_PAGE_IDS = ["general", "audio", "model", "polish", "updates"]
+SETTINGS_PAGE_IDS = ["general", "audio", "model", "polish", "commands", "updates"]
 
 
 class SettingsWindow(QMainWindow):
