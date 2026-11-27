@@ -26,10 +26,10 @@ npm run dev          # open Remotion Studio
 npx remotion render PillDemo out/JasperVoice-demo.mp4
 npx remotion render AppTour  out/JasperVoice-tour.mp4
 
-# poster frames used in the repo README
+# optional poster frames
 npx remotion still PillDemo out/poster-demo.png --frame=235
 npx remotion still AppTour  out/poster-tour.png --frame=150
 ```
 
-Final assets are committed to `../docs/media/` and referenced from the top-level
-`README.md`.
+The original videos are stored in `../docs/media/`. The top-level README uses GitHub video
+attachments for playback and links to the originals for download.

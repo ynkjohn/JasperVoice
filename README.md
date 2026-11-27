@@ -19,11 +19,9 @@ No subscription. No required cloud. No telemetry.
 
 <br/>
 
-<a href="docs/media/JasperVoice-demo.mp4">
-  <img src="docs/media/poster-demo.png" alt="Watch the JasperVoice demo — Listening, Processing, Sent" width="820" />
-</a>
+https://github.com/user-attachments/assets/d08b2ed5-5203-49e1-a1ed-a60dde39bd85
 
-<sub>▶ **[Watch the 30-second demo](docs/media/JasperVoice-demo.mp4)** — the overlay pill goes Listening → Processing → Sent while your words type themselves.</sub>
+<sub>▶ **[Download the demo (MP4)](docs/media/JasperVoice-demo.mp4?raw=true)** — the overlay pill goes Listening → Processing → Sent while your words type themselves.</sub>
 
 </div>
 
@@ -59,11 +57,9 @@ The pill speaks the same language as the pipeline:
 
 <div align="center">
 
-<a href="docs/media/JasperVoice-tour.mp4">
-  <img src="docs/media/poster-tour.png" alt="Tour of the JasperVoice settings window" width="820" />
-</a>
+https://github.com/user-attachments/assets/655f84bd-7e17-49ef-8d58-cb1f49f4b3c4
 
-<sub>▶ **[Watch the app tour](docs/media/JasperVoice-tour.mp4)** — Overview, History, Model &amp; Engine, AI Polish, and the Dictionary.</sub>
+<sub>▶ **[Download the tour (MP4)](docs/media/JasperVoice-tour.mp4?raw=true)** — Overview, History, Model &amp; Engine, AI Polish, and the Dictionary.</sub>
 
 </div>
 
